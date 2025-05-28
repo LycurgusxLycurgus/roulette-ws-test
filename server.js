@@ -8,7 +8,13 @@ const GAME_WIDTH = 800; const GAME_HEIGHT = 600; const GRAVITY = 0.5; const FRIC
 // Attack system constants
 const BASIC_ATTACK_DAMAGE = 5; const BASE_KNOCKBACK = 3; const KNOCKBACK_SCALING = 0.08; 
 const BASIC_ATTACK_DURATION = 150; const BASIC_ATTACK_COOLDOWN = 300; const BASIC_ATTACK_RANGE = 50; const BASIC_ATTACK_HEIGHT = 20;
-const SPECIAL_ATTACK_COOLDOWN = 500; const GUARD_DURATION = 200; const GUARD_COOLDOWN = 400;
+const SPECIAL_ATTACK_DURATION = 250; const SPECIAL_ATTACK_COOLDOWN = 500; 
+const GUARD_DURATION = 200; const GUARD_COOLDOWN = 400;
+
+// Ledge grabbing constants
+const LEDGE_GRAB_RANGE = 25; // How close player needs to be to platform edge
+const LEDGE_GRAB_DURATION = 3000; // Max time hanging (3 seconds)
+const LEDGE_RELEASE_VELOCITY = 8; // Velocity when releasing from ledge
 
 const ROUNDS_TO_WIN_MATCH = 2; const OFF_SCREEN_THRESHOLD = 150; const SERVER_TICK_RATE = 1000 / 60;
 
@@ -16,10 +22,82 @@ const ROUNDS_TO_WIN_MATCH = 2; const OFF_SCREEN_THRESHOLD = 150; const SERVER_TI
 const characterTypes = { "RED_KNIGHT": { color: 'red', moveSpeed: 5, jumpStrength: 12, gravityMultiplier: 1.0 }, "BLUE_NINJA": { color: 'blue', moveSpeed: 6.5, jumpStrength: 14, gravityMultiplier: 0.95 } };
 const stageKeys = ["stage1", "stage2", "stage3", "stage4"]; // Array of stage keys for randomization
 const stages = {
-    "stage1": { name: "Center Platform", platforms: [{ x: GAME_WIDTH * 0.2, y: GAME_HEIGHT - 50, width: GAME_WIDTH * 0.6, height: 50, color: '#228b22' }], spawnPoints: [{ x: GAME_WIDTH / 4, y: GAME_HEIGHT - 150 }, { x: GAME_WIDTH * 3 / 4, y: GAME_HEIGHT - 150 }], bgColor: '#add8e6' },
-    "stage2": { name: "Dual Platforms", platforms: [{ x: GAME_WIDTH * 0.1, y: GAME_HEIGHT - 150, width: GAME_WIDTH * 0.3, height: 30, color: '#a0522d' }, { x: GAME_WIDTH * 0.6, y: GAME_HEIGHT - 150, width: GAME_WIDTH * 0.3, height: 30, color: '#a0522d' }], spawnPoints: [{ x: GAME_WIDTH * 0.25, y: GAME_HEIGHT - 250 }, { x: GAME_WIDTH * 0.75, y: GAME_HEIGHT - 250 }], bgColor: '#d3d3d3' },
-    "stage3": { name: "Sky Bridges", platforms: [{ x: GAME_WIDTH * 0.35, y: GAME_HEIGHT - 80, width: GAME_WIDTH * 0.3, height: 40, color: '#4682b4' }, { x: GAME_WIDTH * 0.05, y: GAME_HEIGHT - 200, width: GAME_WIDTH * 0.2, height: 25, color: '#87ceeb' }, { x: GAME_WIDTH * 0.1, y: GAME_HEIGHT - 320, width: GAME_WIDTH * 0.15, height: 25, color: '#87ceeb' }, { x: GAME_WIDTH * 0.75, y: GAME_HEIGHT - 200, width: GAME_WIDTH * 0.2, height: 25, color: '#87ceeb' }, { x: GAME_WIDTH * 0.75, y: GAME_HEIGHT - 320, width: GAME_WIDTH * 0.15, height: 25, color: '#87ceeb' }, { x: GAME_WIDTH * 0.4, y: GAME_HEIGHT - 400, width: GAME_WIDTH * 0.2, height: 20, color: '#b0c4de' }], spawnPoints: [{ x: GAME_WIDTH * 0.15, y: GAME_HEIGHT - 300 }, { x: GAME_WIDTH * 0.82, y: GAME_HEIGHT - 300 }], bgColor: '#87ceeb' },
-    "stage2": { name: "Dual Platforms", platforms: [{ x: GAME_WIDTH * 0.1, y: GAME_HEIGHT - 150, width: GAME_WIDTH * 0.3, height: 30, color: '#a0522d' }, { x: GAME_WIDTH * 0.6, y: GAME_HEIGHT - 150, width: GAME_WIDTH * 0.3, height: 30, color: '#a0522d' }], spawnPoints: [{ x: GAME_WIDTH * 0.25, y: GAME_HEIGHT - 250 }, { x: GAME_WIDTH * 0.75, y: GAME_HEIGHT - 250 }], bgColor: '#d3d3d3' }
+    "stage1": { 
+        name: "Center Platform", 
+        platforms: [
+            { x: GAME_WIDTH * 0.2, y: GAME_HEIGHT - 50, width: GAME_WIDTH * 0.6, height: 50, color: '#228b22' }
+        ], 
+        spawnPoints: [
+            { x: GAME_WIDTH / 4, y: GAME_HEIGHT - 150 }, 
+            { x: GAME_WIDTH * 3 / 4, y: GAME_HEIGHT - 150 }
+        ], 
+        bgColor: '#add8e6' 
+    },
+    "stage2": { 
+        name: "Dual Platforms", 
+        platforms: [
+            { x: GAME_WIDTH * 0.1, y: GAME_HEIGHT - 150, width: GAME_WIDTH * 0.3, height: 30, color: '#a0522d' }, 
+            { x: GAME_WIDTH * 0.6, y: GAME_HEIGHT - 150, width: GAME_WIDTH * 0.3, height: 30, color: '#a0522d' }
+        ], 
+        spawnPoints: [
+            { x: GAME_WIDTH * 0.25, y: GAME_HEIGHT - 250 }, 
+            { x: GAME_WIDTH * 0.75, y: GAME_HEIGHT - 250 }
+        ], 
+        bgColor: '#d3d3d3' 
+    },
+    "stage3": { 
+        name: "Sky Bridges", 
+        platforms: [
+            // Main central platform
+            { x: GAME_WIDTH * 0.35, y: GAME_HEIGHT - 80, width: GAME_WIDTH * 0.3, height: 40, color: '#4682b4' },
+            // Left floating platforms (darker gray)
+            { x: GAME_WIDTH * 0.05, y: GAME_HEIGHT - 200, width: GAME_WIDTH * 0.2, height: 25, color: '#696969' },
+            { x: GAME_WIDTH * 0.1, y: GAME_HEIGHT - 320, width: GAME_WIDTH * 0.15, height: 25, color: '#696969' },
+            // Right floating platforms (darker gray)
+            { x: GAME_WIDTH * 0.75, y: GAME_HEIGHT - 200, width: GAME_WIDTH * 0.2, height: 25, color: '#696969' },
+            { x: GAME_WIDTH * 0.75, y: GAME_HEIGHT - 320, width: GAME_WIDTH * 0.15, height: 25, color: '#696969' },
+            // Top bridge (darker gray)
+            { x: GAME_WIDTH * 0.4, y: GAME_HEIGHT - 400, width: GAME_WIDTH * 0.2, height: 20, color: '#696969' }
+        ], 
+        spawnPoints: [
+            { x: GAME_WIDTH * 0.15, y: GAME_HEIGHT - 300 }, 
+            { x: GAME_WIDTH * 0.82, y: GAME_HEIGHT - 300 }
+        ], 
+        bgColor: '#87ceeb' 
+    },
+    "stage4": { 
+        name: "Arena Walls", 
+        platforms: [
+            // Main floor platform
+            { x: GAME_WIDTH * 0.15, y: GAME_HEIGHT - 50, width: GAME_WIDTH * 0.7, height: 50, color: '#8b4513' },
+            // Left wall
+            { x: GAME_WIDTH * 0.05, y: GAME_HEIGHT - 300, width: 30, height: 250, color: '#696969' },
+            // Right wall
+            { x: GAME_WIDTH * 0.915, y: GAME_HEIGHT - 300, width: 30, height: 250, color: '#696969' },
+            // Small elevated platforms on walls
+            { x: GAME_WIDTH * 0.08, y: GAME_HEIGHT - 180, width: 80, height: 20, color: '#a0522d' },
+            { x: GAME_WIDTH * 0.84, y: GAME_HEIGHT - 180, width: 80, height: 20, color: '#a0522d' }
+        ], 
+        spawnPoints: [
+            { x: GAME_WIDTH * 0.25, y: GAME_HEIGHT - 150 }, 
+            { x: GAME_WIDTH * 0.75, y: GAME_HEIGHT - 150 }
+        ], 
+        bgColor: '#2f4f4f' 
+    }
+};
+
+// Character-specific attack properties
+const characterAttacks = {
+    "RED_KNIGHT": {
+        basicDamage: 7, basicRange: 60, basicKnockback: 1.2,
+        specialDamage: 12, specialRange: 80, specialKnockback: 1.5,
+        guardReduction: 0.5
+    },
+    "BLUE_NINJA": {
+        basicDamage: 4, basicRange: 40, basicKnockback: 0.8,
+        specialDamage: 8, specialRange: 60, specialKnockback: 1.0,
+        guardReduction: 0.8
+    }
 };
 
 // --- Server State ---
@@ -34,8 +112,10 @@ let serverGame = {
     basicAttackCooldowns: { player1: 0, player2: 0 }, 
     basicAttackActiveTimers: { player1: 0, player2: 0 },
     specialAttackCooldowns: { player1: 0, player2: 0 },
+    specialAttackActiveTimers: { player1: 0, player2: 0 },
     guardCooldowns: { player1: 0, player2: 0 },
     guardActiveTimers: { player1: 0, player2: 0 },
+    ledgeHangTimers: { player1: 0, player2: 0 },
     pendingRoundReset: false, pendingMatchReset: false, lastUpdateTime: 0, deltaTime: 0
 };
 
@@ -50,8 +130,55 @@ function createPlayer(id, type) {
         x: sP.x - 25, y: sP.y, vx: 0, vy: 0, isOnGround: false, percentage: 0, 
         facingDirection: sI === 0 ? 1 : -1, 
         // Updated attack/guard states
-        isBasicAttacking: false, isSpecialAttacking: false, isGuarding: false 
+        isBasicAttacking: false, isSpecialAttacking: false, isGuarding: false,
+        // Ledge grabbing states
+        isLedgeHanging: false, ledgePlatform: null, ledgeDirection: 0 
     };
+}
+
+// Ledge grabbing helper functions
+function checkLedgeGrab(player) {
+    if (!serverGame.stage || player.isOnGround || player.isLedgeHanging || player.vy <= 0) return null;
+    
+    // Check each platform for ledge grab opportunity
+    for(const plat of serverGame.stage.platforms) {
+        const playerBottom = player.y + player.height;
+        const playerCenter = player.x + player.width / 2;
+        
+        // Check if player is falling past platform level
+        if (playerBottom > plat.y && playerBottom < plat.y + plat.height + LEDGE_GRAB_RANGE) {
+            // Check left edge
+            if (Math.abs(playerCenter - plat.x) < LEDGE_GRAB_RANGE && player.x < plat.x) {
+                return { platform: plat, direction: -1, x: plat.x - player.width, y: plat.y - player.height };
+            }
+            // Check right edge  
+            if (Math.abs(playerCenter - (plat.x + plat.width)) < LEDGE_GRAB_RANGE && player.x > plat.x + plat.width) {
+                return { platform: plat, direction: 1, x: plat.x + plat.width, y: plat.y - player.height };
+            }
+        }
+    }
+    return null;
+}
+
+function releaseLedgeGrab(player, direction) {
+    player.isLedgeHanging = false;
+    player.ledgePlatform = null;
+    player.ledgeDirection = 0;
+    serverGame.ledgeHangTimers[player.id] = 0;
+    
+    if (direction > 0) {
+        // Release upward/forward (climb up)
+        player.vy = -LEDGE_RELEASE_VELOCITY * 1.5;
+        player.vx = player.facingDirection * LEDGE_RELEASE_VELOCITY * 0.5;
+    } else if (direction < 0) {
+        // Release backward (fall back)
+        player.vy = -LEDGE_RELEASE_VELOCITY * 0.5;
+        player.vx = -player.facingDirection * LEDGE_RELEASE_VELOCITY;
+    } else {
+        // Release downward (let go)
+        player.vy = LEDGE_RELEASE_VELOCITY * 0.3;
+        player.vx = 0;
+    }
 }
 
 // --- Server Game Loop ---
@@ -64,6 +191,16 @@ function gameTick() {
                 serverGame.basicAttackActiveTimers[pId] -= serverGame.deltaTime;
                 if(serverGame.basicAttackActiveTimers[pId] <= 0) {
                     if(serverGame.players[pId]) serverGame.players[pId].isBasicAttacking = false;
+                }
+            }
+        }
+        
+        // Special attack timers (fixes purple effect staying forever)
+        for(const pId in serverGame.specialAttackActiveTimers) {
+            if(serverGame.specialAttackActiveTimers[pId] > 0) {
+                serverGame.specialAttackActiveTimers[pId] -= serverGame.deltaTime;
+                if(serverGame.specialAttackActiveTimers[pId] <= 0) {
+                    if(serverGame.players[pId]) serverGame.players[pId].isSpecialAttacking = false;
                 }
             }
         }
@@ -88,6 +225,20 @@ function gameTick() {
             if(serverGame.guardCooldowns[pId] > 0) serverGame.guardCooldowns[pId] -= serverGame.deltaTime;
         }
         
+        // Update ledge hang timers (auto-release after max time)
+        for(const pId in serverGame.ledgeHangTimers) {
+            if(serverGame.ledgeHangTimers[pId] > 0) {
+                serverGame.ledgeHangTimers[pId] -= serverGame.deltaTime;
+                if(serverGame.ledgeHangTimers[pId] <= 0) {
+                    const player = serverGame.players[pId];
+                    if(player && player.isLedgeHanging) {
+                        releaseLedgeGrab(player, 0); // Force release downward
+                        console.log(`[Svr Ledge] ${player.id} auto-released from ledge`);
+                    }
+                }
+            }
+        }
+        
         updatePlayerPhysics("player1"); updatePlayerPhysics("player2");
         checkServerWinConditions();
     }
@@ -100,6 +251,36 @@ function updatePlayerPhysics(playerId) {
     const client = Array.from(clients.values()).find(c => c.playerId === playerId);
     const input = client ? client.lastInput : { left: false, right: false, jump: false, basicAttack: false, specialAttack: false, guard: false };
 
+    // Handle ledge hanging state
+    if (player.isLedgeHanging) {
+        // Player is hanging on ledge - limited actions
+        player.vx = 0; // No horizontal movement while hanging
+        player.vy = 0; // No falling while hanging
+        
+        // Ledge release controls
+        if (input.jump) {
+            // Jump up/forward to climb onto platform
+            releaseLedgeGrab(player, 1);
+            console.log(`[Svr Ledge] ${player.id} climbed up from ledge`);
+        } else if (input.left && player.ledgeDirection === -1) {
+            // Release backward (away from platform)
+            releaseLedgeGrab(player, -1);
+            console.log(`[Svr Ledge] ${player.id} released backward from ledge`);
+        } else if (input.right && player.ledgeDirection === 1) {
+            // Release backward (away from platform)  
+            releaseLedgeGrab(player, -1);
+            console.log(`[Svr Ledge] ${player.id} released backward from ledge`);
+        } else if (input.guard) {
+            // Let go and fall
+            releaseLedgeGrab(player, 0);
+            console.log(`[Svr Ledge] ${player.id} let go from ledge`);
+        }
+        
+        // Skip normal physics while hanging
+        return;
+    }
+
+    // Normal movement and physics (existing code)
     // Movement (slower if guarding)
     const moveMultiplier = player.isGuarding ? 0.3 : 1.0;
     let iVx = player.vx; 
@@ -121,15 +302,17 @@ function updatePlayerPhysics(playerId) {
         console.log(`[Svr Guard] ${player.id} is guarding`);
     }
     
-    // Basic Attack
+    // Basic Attack (character-specific)
     if (input.basicAttack && serverGame.basicAttackActiveTimers[playerId] <= 0 && serverGame.basicAttackCooldowns[playerId] <= 0 && !player.isGuarding) { 
         serverGame.basicAttackCooldowns[playerId] = BASIC_ATTACK_COOLDOWN; 
         serverGame.basicAttackActiveTimers[playerId] = BASIC_ATTACK_DURATION; 
         player.isBasicAttacking = true; 
         
-        const bX = player.facingDirection === 1 ? player.x + player.width : player.x - BASIC_ATTACK_RANGE; 
+        const charStats = characterAttacks[player.type];
+        const attackRange = charStats.basicRange;
+        const bX = player.facingDirection === 1 ? player.x + player.width : player.x - attackRange; 
         const bY = player.y + (player.height / 2) - (BASIC_ATTACK_HEIGHT / 2); 
-        const aB = { x: bX, y: bY, width: BASIC_ATTACK_RANGE, height: BASIC_ATTACK_HEIGHT }; 
+        const aB = { x: bX, y: bY, width: attackRange, height: BASIC_ATTACK_HEIGHT }; 
         
         if (opp && checkCollision(aB, opp)) { 
             // Check if opponent is guarding
@@ -140,9 +323,9 @@ function updatePlayerPhysics(playerId) {
                 opp.vx = reducedKb * player.facingDirection * 0.8;
                 opp.vy = -reducedKb * 0.5;
             } else {
-                opp.percentage += BASIC_ATTACK_DAMAGE; 
+                opp.percentage += charStats.basicDamage; 
                 const wf = opp.gravityMultiplier > 0 ? (1 / opp.gravityMultiplier) : 1; 
-                const kb = (BASE_KNOCKBACK + (opp.percentage * KNOCKBACK_SCALING)) * wf; 
+                const kb = (BASE_KNOCKBACK * charStats.basicKnockback + (opp.percentage * KNOCKBACK_SCALING)) * wf; 
                 const ang = Math.PI / 4.5; 
                 opp.vx = kb * player.facingDirection * Math.cos(ang); 
                 opp.vy = -kb * Math.sin(ang); 
@@ -152,12 +335,68 @@ function updatePlayerPhysics(playerId) {
         }
     }
     
-    // Special Attack (placeholder for now)
-    if (input.specialAttack && serverGame.specialAttackCooldowns[playerId] <= 0 && !player.isGuarding) {
+    // Special Attack (character-specific)
+    if (input.specialAttack && serverGame.specialAttackActiveTimers[playerId] <= 0 && serverGame.specialAttackCooldowns[playerId] <= 0 && !player.isGuarding) {
         serverGame.specialAttackCooldowns[playerId] = SPECIAL_ATTACK_COOLDOWN;
+        serverGame.specialAttackActiveTimers[playerId] = SPECIAL_ATTACK_DURATION; // Fixed timer
         player.isSpecialAttacking = true;
-        console.log(`[Svr Special] ${player.id} used special attack (placeholder)`);
-        // TODO: Character-specific special attacks in Phase 3
+        
+        const charStats = characterAttacks[player.type];
+        
+        if (player.type === "RED_KNIGHT") {
+            // Ground Pound (AoE downward attack)
+            const groundPoundArea = { 
+                x: player.x - 40, 
+                y: player.y + player.height, 
+                width: player.width + 80, 
+                height: 60 
+            };
+            
+            if (opp && checkCollision(groundPoundArea, opp)) {
+                if (opp.isGuarding) {
+                    console.log(`[Svr Special Blocked] ${player.id} ground pound blocked by ${opp.id}`);
+                    const reducedKb = BASE_KNOCKBACK * 0.5;
+                    opp.vx = reducedKb * player.facingDirection * 0.6;
+                    opp.vy = -reducedKb * 0.3;
+                } else {
+                    opp.percentage += charStats.specialDamage;
+                    const kb = (BASE_KNOCKBACK * charStats.specialKnockback + (opp.percentage * KNOCKBACK_SCALING)) * (1 / opp.gravityMultiplier);
+                    opp.vx = kb * player.facingDirection * 0.5; // More horizontal
+                    opp.vy = -kb * 0.8; // Strong vertical
+                    opp.isOnGround = false;
+                    console.log(`[Svr Ground Pound] ${player.id}>${opp.id}. ${opp.id}%:${opp.percentage}`);
+                }
+            }
+            
+        } else if (player.type === "BLUE_NINJA") {
+            // Dash Attack (moves forward while attacking)
+            const dashDistance = 100;
+            player.vx = player.facingDirection * dashDistance / 10; // Dash movement
+            
+            const dashAttackArea = {
+                x: player.facingDirection === 1 ? player.x : player.x - charStats.specialRange,
+                y: player.y,
+                width: charStats.specialRange,
+                height: player.height
+            };
+            
+            if (opp && checkCollision(dashAttackArea, opp)) {
+                if (opp.isGuarding) {
+                    console.log(`[Svr Special Blocked] ${player.id} dash attack blocked by ${opp.id}`);
+                    const reducedKb = BASE_KNOCKBACK * 0.4;
+                    opp.vx = reducedKb * player.facingDirection;
+                    opp.vy = -reducedKb * 0.2;
+                } else {
+                    opp.percentage += charStats.specialDamage;
+                    const kb = (BASE_KNOCKBACK * charStats.specialKnockback + (opp.percentage * KNOCKBACK_SCALING)) * (1 / opp.gravityMultiplier);
+                    const ang = Math.PI / 5; // Flatter angle
+                    opp.vx = kb * player.facingDirection * Math.cos(ang);
+                    opp.vy = -kb * Math.sin(ang);
+                    opp.isOnGround = false;
+                    console.log(`[Svr Dash Attack] ${player.id}>${opp.id}. ${opp.id}%:${opp.percentage}`);
+                }
+            }
+        }
     }
     
     // Physics
@@ -166,6 +405,25 @@ function updatePlayerPhysics(playerId) {
     let nY = player.y + player.vy * (serverGame.deltaTime / (1000 / 60)); 
     let landed = false;
     
+    // Check for ledge grab opportunity (before platform collision)
+    if (!player.isGuarding && !player.isBasicAttacking && !player.isSpecialAttacking) {
+        const ledgeGrab = checkLedgeGrab(player);
+        if (ledgeGrab) {
+            player.isLedgeHanging = true;
+            player.ledgePlatform = ledgeGrab.platform;
+            player.ledgeDirection = ledgeGrab.direction;
+            player.x = ledgeGrab.x;
+            player.y = ledgeGrab.y;
+            player.vx = 0;
+            player.vy = 0;
+            player.facingDirection = ledgeGrab.direction;
+            serverGame.ledgeHangTimers[playerId] = LEDGE_GRAB_DURATION;
+            console.log(`[Svr Ledge] ${player.id} grabbed ledge on ${ledgeGrab.direction === -1 ? 'left' : 'right'} side`);
+            return; // Skip normal collision detection
+        }
+    }
+    
+    // Normal platform collision detection
     for(const plat of serverGame.stage.platforms) {
         const pBN = nY + player.height; const pL = player.x; const pR = player.x + player.width; 
         if(player.vy >= 0 && pBN >= plat.y && player.y < plat.y && pR > plat.x && pL < plat.x + plat.width) {
@@ -199,18 +457,34 @@ function resetServerPlayerState(player) {
      player.isSpecialAttacking = false;
      player.isGuarding = false;
      
+     // Reset ledge hanging states
+     player.isLedgeHanging = false;
+     player.ledgePlatform = null;
+     player.ledgeDirection = 0;
+     
      // Reset all timers
      serverGame.basicAttackCooldowns[player.id] = 0;
      serverGame.basicAttackActiveTimers[player.id] = 0;
      serverGame.specialAttackCooldowns[player.id] = 0;
+     serverGame.specialAttackActiveTimers[player.id] = 0;
      serverGame.guardCooldowns[player.id] = 0;
      serverGame.guardActiveTimers[player.id] = 0;
+     serverGame.ledgeHangTimers[player.id] = 0;
 }
 
 function resetServerRoundState() { // Resets players for new round, keeps scores
     console.log("[Server] Resetting Round State.");
-    for (const pId in serverGame.players) { resetServerPlayerState(serverGame.players[pId]); }
-    serverGame.match.roundWinnerId = null; serverGame.pendingRoundReset = false;
+    
+    // Change stage every round for more variety!
+    const randomStageKey = stageKeys[Math.floor(Math.random() * stageKeys.length)];
+    serverGame.stage = stages[randomStageKey];
+    console.log(`[Server] New Round Stage: ${serverGame.stage.name}`);
+    
+    for (const pId in serverGame.players) { 
+        resetServerPlayerState(serverGame.players[pId]); 
+    }
+    serverGame.match.roundWinnerId = null; 
+    serverGame.pendingRoundReset = false;
 }
 
 function handleServerRoundEnd(winner, loser) {
@@ -344,6 +618,8 @@ function getSerializableGameState() {
                 isBasicAttacking: p.isBasicAttacking,
                 isSpecialAttacking: p.isSpecialAttacking,
                 isGuarding: p.isGuarding,
+                // Ledge hanging state
+                isLedgeHanging: p.isLedgeHanging,
                 type: p.type,
                 color: p.color,
                 width: p.width,
