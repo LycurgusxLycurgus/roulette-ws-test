@@ -1,4 +1,4 @@
-// server.js - Phase 2: Final API Usage and Game Feel Fix
+// server.js - Phase 2: Definitive Physics and State Model
 
 const WebSocket = require('ws');
 const Matter = require('matter-js');
@@ -6,6 +6,7 @@ const Matter = require('matter-js');
 // --- Game Constants ---
 const GAME_WIDTH = 800; const GAME_HEIGHT = 600;
 const PLAYER_JUMP_VELOCITY = 16;
+const AIR_CONTROL_FORCE = 0.002; // A small force for influencing movement mid-air
 const BASE_KNOCKBACK = 0.06;
 const KNOCKBACK_SCALING = 0.0006;
 
@@ -41,6 +42,8 @@ const PORT = process.env.PORT || 8080;
 let engine = Matter.Engine.create();
 engine.world.gravity.y = 1.2;
 const physicsBodies = {};
+// --- FIX: Reliable ground detection using a Set ---
+const groundedPlayers = new Set();
 
 // --- Authoritative Game State ---
 let serverGame = {
@@ -155,6 +158,9 @@ function processPlayerInputs() {
         const body = physicsBodies[playerId];
         if (!player || !body) continue;
 
+        // Update ground state from our reliable Set
+        player.isOnGround = groundedPlayers.has(playerId);
+
         if (!player.isLedgeHanging && body.isStatic) {
             Matter.Body.setStatic(body, false);
         }
@@ -182,19 +188,34 @@ function processPlayerInputs() {
         }
 
         const moveMultiplier = player.isGuarding ? 0.3 : 1.0;
-        let targetVelocityX = body.velocity.x;
-        if (input.left) {
-            targetVelocityX = -player.moveSpeed * moveMultiplier;
-            player.facingDirection = -1;
-        } else if (input.right) {
-            targetVelocityX = player.moveSpeed * moveMultiplier;
-            player.facingDirection = 1;
+        
+        // --- FIX: Hybrid Movement Model ---
+        if (player.isOnGround) {
+            // On ground: Use setVelocity for snappy control
+            let targetVelocityX = 0;
+            if (input.left) {
+                targetVelocityX = -player.moveSpeed * moveMultiplier;
+                player.facingDirection = -1;
+            } else if (input.right) {
+                targetVelocityX = player.moveSpeed * moveMultiplier;
+                player.facingDirection = 1;
+            }
+            Matter.Body.setVelocity(body, { x: targetVelocityX, y: body.velocity.y });
+        } else {
+            // In air: Use applyForce for nuanced air control (DI)
+            if (input.left) {
+                Matter.Body.applyForce(body, body.position, { x: -AIR_CONTROL_FORCE * moveMultiplier, y: 0 });
+                player.facingDirection = -1;
+            } else if (input.right) {
+                Matter.Body.applyForce(body, body.position, { x: AIR_CONTROL_FORCE * moveMultiplier, y: 0 });
+                player.facingDirection = 1;
+            }
         }
-        Matter.Body.setVelocity(body, { x: targetVelocityX, y: body.velocity.y });
 
         if (input.jump && player.isOnGround && !player.isGuarding) {
             Matter.Body.setVelocity(body, { x: body.velocity.x, y: -PLAYER_JUMP_VELOCITY });
             player.isOnGround = false;
+            groundedPlayers.delete(playerId); // Immediately update our ground state
         }
 
         const opp = serverGame.players[playerId === "player1" ? "player2" : "player1"];
@@ -255,13 +276,6 @@ function processPlayerInputs() {
 }
 
 function updateStateFromPhysics() {
-    for (const pId in serverGame.players) {
-        if (serverGame.players[pId]) serverGame.players[pId].isOnGround = false;
-    }
-
-    // --- FIX: Remove the crashing Query.collides call ---
-    // The ground check is now handled by the 'collisionStart' event.
-
     for (const playerId in serverGame.players) {
         const player = serverGame.players[playerId];
         const body = physicsBodies[playerId];
@@ -279,24 +293,23 @@ function updateStateFromPhysics() {
     }
 }
 
-// --- FIX: Use 'collisionStart' for the ground sensor ---
+// --- FIX: Event-driven ground detection ---
 Matter.Events.on(engine, 'collisionStart', (event) => {
     const pairs = event.pairs;
     for (const pair of pairs) {
         let sensorLabel;
-        if (pair.bodyA.label.endsWith('_sensor') && pair.bodyB.label.startsWith('platform')) {
-            sensorLabel = pair.bodyA.label;
-        } else if (pair.bodyB.label.endsWith('_sensor') && pair.bodyA.label.startsWith('platform')) {
-            sensorLabel = pair.bodyB.label;
-        }
-
-        if (sensorLabel) {
-            const playerId = sensorLabel.replace('_sensor', '');
-            const player = serverGame.players[playerId];
-            if (player) {
-                player.isOnGround = true;
-            }
-        }
+        if (pair.bodyA.label.endsWith('_sensor') && pair.bodyB.label.startsWith('platform')) { sensorLabel = pair.bodyA.label; } 
+        else if (pair.bodyB.label.endsWith('_sensor') && pair.bodyA.label.startsWith('platform')) { sensorLabel = pair.bodyB.label; }
+        if (sensorLabel) groundedPlayers.add(sensorLabel.replace('_sensor', ''));
+    }
+});
+Matter.Events.on(engine, 'collisionEnd', (event) => {
+    const pairs = event.pairs;
+    for (const pair of pairs) {
+        let sensorLabel;
+        if (pair.bodyA.label.endsWith('_sensor') && pair.bodyB.label.startsWith('platform')) { sensorLabel = pair.bodyA.label; } 
+        else if (pair.bodyB.label.endsWith('_sensor') && pair.bodyA.label.startsWith('platform')) { sensorLabel = pair.bodyB.label; }
+        if (sensorLabel) groundedPlayers.delete(sensorLabel.replace('_sensor', ''));
     }
 });
 
@@ -345,6 +358,7 @@ function resetServerRoundState() {
     console.log("[Server] Resetting Round State.");
     
     Matter.World.clear(engine.world, false);
+    groundedPlayers.clear(); // Clear the ground state
     engine.world.gravity.y = 1.2;
 
     const randomStageKey = stageKeys[Math.floor(Math.random() * stageKeys.length)];
