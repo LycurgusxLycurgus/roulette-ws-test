@@ -1,12 +1,11 @@
-// server.js - Phase 2: Final Game Feel & State Management Fix
+// server.js - Phase 2: Final API Usage and Game Feel Fix
 
 const WebSocket = require('ws');
 const Matter = require('matter-js');
 
 // --- Game Constants ---
 const GAME_WIDTH = 800; const GAME_HEIGHT = 600;
-const PLAYER_JUMP_VELOCITY = 16; 
-// --- FIX: Drastically reduced knockback values for Matter.js's applyForce ---
+const PLAYER_JUMP_VELOCITY = 16;
 const BASE_KNOCKBACK = 0.06;
 const KNOCKBACK_SCALING = 0.0006;
 
@@ -67,7 +66,6 @@ function createPlayer(id, type) {
     const playerWidth = 50;
     const playerHeight = 50;
     const mainBody = Matter.Bodies.rectangle(0, 0, playerWidth, playerHeight, { inertia: Infinity, friction: 0.1 });
-    // --- FIX: Create a reliable ground sensor ---
     const groundSensor = Matter.Bodies.rectangle(0, playerHeight / 2, playerWidth - 10, 5, { isSensor: true, label: `${id}_sensor` });
     
     const playerBody = Matter.Body.create({
@@ -93,7 +91,6 @@ function createPlayer(id, type) {
 }
 
 function checkLedgeGrab(player) {
-    // --- FIX: The reliable isOnGround check now prevents this from triggering while walking ---
     if (!serverGame.stage || player.isOnGround || player.isLedgeHanging) return null;
     const body = physicsBodies[player.id];
     if (!body || body.velocity.y <= 0) return null;
@@ -258,25 +255,12 @@ function processPlayerInputs() {
 }
 
 function updateStateFromPhysics() {
-    // --- FIX: Assume players are not grounded until the physics engine says they are ---
     for (const pId in serverGame.players) {
         if (serverGame.players[pId]) serverGame.players[pId].isOnGround = false;
     }
 
-    const activeCollisions = Matter.Query.collides(engine.world, Matter.Composite.allBodies(engine.world));
-    activeCollisions.forEach(collision => {
-        const { bodyA, bodyB } = collision;
-        let player, playerBody;
-        if (bodyA.label.endsWith('_sensor')) {
-            playerBody = bodyA;
-        } else if (bodyB.label.endsWith('_sensor')) {
-            playerBody = bodyB;
-        }
-        if (playerBody) {
-            player = serverGame.players[playerBody.label.replace('_sensor', '')];
-            if (player) player.isOnGround = true;
-        }
-    });
+    // --- FIX: Remove the crashing Query.collides call ---
+    // The ground check is now handled by the 'collisionStart' event.
 
     for (const playerId in serverGame.players) {
         const player = serverGame.players[playerId];
@@ -294,6 +278,28 @@ function updateStateFromPhysics() {
         player.vy = body.velocity.y;
     }
 }
+
+// --- FIX: Use 'collisionStart' for the ground sensor ---
+Matter.Events.on(engine, 'collisionStart', (event) => {
+    const pairs = event.pairs;
+    for (const pair of pairs) {
+        let sensorLabel;
+        if (pair.bodyA.label.endsWith('_sensor') && pair.bodyB.label.startsWith('platform')) {
+            sensorLabel = pair.bodyA.label;
+        } else if (pair.bodyB.label.endsWith('_sensor') && pair.bodyA.label.startsWith('platform')) {
+            sensorLabel = pair.bodyB.label;
+        }
+
+        if (sensorLabel) {
+            const playerId = sensorLabel.replace('_sensor', '');
+            const player = serverGame.players[playerId];
+            if (player) {
+                player.isOnGround = true;
+            }
+        }
+    }
+});
+
 
 function checkServerWinConditions() {
     if (serverGame.state !== "playing") return;
@@ -352,12 +358,11 @@ function resetServerRoundState() {
     );
     Matter.World.add(engine.world, platformBodies);
     
-    // --- FIX: Robustly re-initialize players for the new round ---
     for (const pId in serverGame.players) { 
         const player = serverGame.players[pId];
         const body = physicsBodies[pId];
         if (player && body) {
-            Matter.World.add(engine.world, body); // Ensure body is in the new world
+            Matter.World.add(engine.world, body);
             resetServerPlayerState(player); 
         }
     }
