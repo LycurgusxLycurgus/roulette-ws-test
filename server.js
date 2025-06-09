@@ -1,29 +1,28 @@
-// server.js - Phase 2: Integrated Matter.js for Physics
+// server.js - Phase 2: Integrated Matter.js for Physics (FIXED)
 
 const WebSocket = require('ws');
-const Matter = require('matter-js'); // --- NEW: Import Matter.js
+const Matter = require('matter-js');
 
 // --- Game Constants ---
 const GAME_WIDTH = 800; const GAME_HEIGHT = 600;
-// --- NOTE: Physics constants are now tuned for Matter.js ---
-const PLAYER_MOVE_FORCE = 0.003; // Force applied for movement
-const PLAYER_JUMP_VELOCITY = 14; // Instantaneous velocity for jumps
-const KNOCKBACK_SCALING = 0.04; // Multiplier for knockback force
+const PLAYER_MOVE_FORCE = 0.003; 
+const PLAYER_JUMP_VELOCITY = 14; 
+const KNOCKBACK_SCALING = 0.04; 
 
-// Attack system constants (no change)
+// Attack system constants
 const BASIC_ATTACK_DAMAGE = 5; const BASE_KNOCKBACK = 3; 
 const BASIC_ATTACK_DURATION = 150; const BASIC_ATTACK_COOLDOWN = 300; const BASIC_ATTACK_RANGE = 50; const BASIC_ATTACK_HEIGHT = 20;
 const SPECIAL_ATTACK_DURATION = 250; const SPECIAL_ATTACK_COOLDOWN = 500; 
 const GUARD_DURATION = 200; const GUARD_COOLDOWN = 400;
 
-// Ledge grabbing constants (no change)
+// Ledge grabbing constants
 const LEDGE_GRAB_RANGE = 25;
 const LEDGE_GRAB_DURATION = 3000;
 const LEDGE_RELEASE_VELOCITY = 8;
 
 const ROUNDS_TO_WIN_MATCH = 2; const OFF_SCREEN_THRESHOLD = 150; const SERVER_TICK_RATE = 1000 / 60;
 
-// --- Data Definitions (no change) ---
+// --- Data Definitions ---
 const characterTypes = { "RED_KNIGHT": { color: 'red', moveSpeed: 5, jumpStrength: 12, gravityMultiplier: 1.0 }, "BLUE_NINJA": { color: 'blue', moveSpeed: 6.5, jumpStrength: 14, gravityMultiplier: 0.95 } };
 const stageKeys = ["stage1", "stage2", "stage3", "stage4"];
 const stages = {
@@ -39,16 +38,15 @@ const clients = new Map();
 let player1ClientId = null; let player2ClientId = null; let gameLoopInterval = null;
 const PORT = process.env.PORT || 8080;
 
-// --- NEW: Physics Engine Setup ---
+// --- Physics Engine Setup ---
 let engine = Matter.Engine.create();
-engine.world.gravity.y = 1.2; // Tuned for Matter.js
-const physicsBodies = {}; // To store player physics bodies { 'player1': body, 'player2': body }
+engine.world.gravity.y = 1.2;
+const physicsBodies = {};
 
-// --- Authoritative Game State (vx/vy are now for client-side interpolation only) ---
+// --- Authoritative Game State ---
 let serverGame = {
     state: "waiting", stage: null, players: {},
     match: { scores: [0, 0], roundWinnerId: null, matchWinnerId: null },
-    // Timers are unchanged
     basicAttackCooldowns: { player1: 0, player2: 0 }, basicAttackActiveTimers: { player1: 0, player2: 0 },
     specialAttackCooldowns: { player1: 0, player2: 0 }, specialAttackActiveTimers: { player1: 0, player2: 0 },
     guardCooldowns: { player1: 0, player2: 0 }, guardActiveTimers: { player1: 0, player2: 0 },
@@ -64,14 +62,9 @@ function createPlayer(id, type) {
     const cT=characterTypes[type]; const sI=id==='player1'?0:1; const sP=serverGame.stage.spawnPoints[sI];
     if(!sP){console.error(`Spawn ${sI} missing`);return null;}
 
-    // --- NEW: Create a Matter.js body for the player ---
     const playerBody = Matter.Bodies.rectangle(sP.x, sP.y, 50, 50, {
-        label: id,
-        inertia: Infinity, // Prevents rotation
-        frictionAir: 0.02, // Some air resistance
-        friction: 0.05, // Friction on surfaces
-        restitution: 0.1, // Bounciness
-        mass: cT.gravityMultiplier > 1 ? 12 : 10 // Heavier characters are less affected by knockback
+        label: id, inertia: Infinity, frictionAir: 0.02, friction: 0.05, restitution: 0.1,
+        mass: cT.gravityMultiplier > 1 ? 12 : 10
     });
     physicsBodies[id] = playerBody;
     Matter.World.add(engine.world, playerBody);
@@ -86,16 +79,13 @@ function createPlayer(id, type) {
     };
 }
 
-// Ledge grabbing functions are unchanged but will interact with the new physics
 function checkLedgeGrab(player) {
     if (!serverGame.stage || player.isOnGround || player.isLedgeHanging) return null;
     const body = physicsBodies[player.id];
-    if (!body || body.velocity.y <= 0) return null; // Only check when falling
+    if (!body || body.velocity.y <= 0) return null;
     
     for(const plat of serverGame.stage.platforms) {
         const playerBottom = player.y + player.height;
-        const playerCenter = player.x + player.width / 2;
-        
         if (playerBottom > plat.y && playerBottom < plat.y + plat.height + LEDGE_GRAB_RANGE) {
             if (Math.abs((player.x + player.width) - plat.x) < LEDGE_GRAB_RANGE && player.x < plat.x) {
                 return { platform: plat, direction: 1, x: plat.x - player.width, y: plat.y };
@@ -115,16 +105,12 @@ function releaseLedgeGrab(player, direction) {
     serverGame.ledgeHangTimers[player.id] = 0;
     
     const body = physicsBodies[player.id];
-    Matter.Body.setStatic(body, false); // --- NEW: Re-enable physics
+    Matter.Body.setStatic(body, false);
 
     let releaseVel = { x: 0, y: 0 };
-    if (direction > 0) { // Climb up
-        releaseVel = { x: player.facingDirection * 4, y: -PLAYER_JUMP_VELOCITY * 0.8 };
-    } else if (direction < 0) { // Release backward
-        releaseVel = { x: -player.facingDirection * 6, y: -4 };
-    } else { // Let go
-        releaseVel = { x: 0, y: 2 };
-    }
+    if (direction > 0) { releaseVel = { x: player.facingDirection * 4, y: -PLAYER_JUMP_VELOCITY * 0.8 };
+    } else if (direction < 0) { releaseVel = { x: -player.facingDirection * 6, y: -4 };
+    } else { releaseVel = { x: 0, y: 2 }; }
     Matter.Body.setVelocity(body, releaseVel);
 }
 
@@ -135,7 +121,6 @@ function gameTick() {
     serverGame.lastUpdateTime = now;
 
     if (serverGame.state === "playing") {
-        // Update timers (no change)
         for(const pId in serverGame.basicAttackActiveTimers) { if(serverGame.basicAttackActiveTimers[pId] > 0) { serverGame.basicAttackActiveTimers[pId] -= serverGame.deltaTime; if(serverGame.basicAttackActiveTimers[pId] <= 0) if(serverGame.players[pId]) serverGame.players[pId].isBasicAttacking = false; } }
         for(const pId in serverGame.specialAttackActiveTimers) { if(serverGame.specialAttackActiveTimers[pId] > 0) { serverGame.specialAttackActiveTimers[pId] -= serverGame.deltaTime; if(serverGame.specialAttackActiveTimers[pId] <= 0) if(serverGame.players[pId]) serverGame.players[pId].isSpecialAttacking = false; } }
         for(const pId in serverGame.guardActiveTimers) { if(serverGame.guardActiveTimers[pId] > 0) { serverGame.guardActiveTimers[pId] -= serverGame.deltaTime; if(serverGame.guardActiveTimers[pId] <= 0) if(serverGame.players[pId]) serverGame.players[pId].isGuarding = false; } }
@@ -144,21 +129,14 @@ function gameTick() {
         for(const pId in serverGame.guardCooldowns) { if(serverGame.guardCooldowns[pId] > 0) serverGame.guardCooldowns[pId] -= serverGame.deltaTime; }
         for(const pId in serverGame.ledgeHangTimers) { if(serverGame.ledgeHangTimers[pId] > 0) { serverGame.ledgeHangTimers[pId] -= serverGame.deltaTime; if(serverGame.ledgeHangTimers[pId] <= 0) { const p = serverGame.players[pId]; if(p && p.isLedgeHanging) releaseLedgeGrab(p, 0); } } }
 
-        // --- NEW: Process inputs and apply forces ---
         processPlayerInputs();
-        
-        // --- NEW: Step the physics engine ---
         Matter.Engine.update(engine, serverGame.deltaTime);
-        
-        // --- NEW: Update game state from physics engine ---
         updateStateFromPhysics();
-
         checkServerWinConditions();
     }
     broadcastGameState();
 }
 
-// --- NEW: Separated input processing from physics updates ---
 function processPlayerInputs() {
     for (const playerId in serverGame.players) {
         const player = serverGame.players[playerId];
@@ -168,12 +146,11 @@ function processPlayerInputs() {
         const client = Array.from(clients.values()).find(c => c.playerId === playerId);
         const input = client ? client.lastInput : {};
         
-        // --- Ledge Grab Logic ---
         if (player.isLedgeHanging) {
             if (input.jump) releaseLedgeGrab(player, 1);
             else if ((input.left && player.facingDirection === 1) || (input.right && player.facingDirection === -1)) releaseLedgeGrab(player, -1);
             else if (input.guard) releaseLedgeGrab(player, 0);
-            continue; // Skip other physics if hanging
+            continue;
         }
 
         const ledgeGrab = checkLedgeGrab(player);
@@ -182,15 +159,12 @@ function processPlayerInputs() {
             player.ledgePlatform = ledgeGrab.platform;
             player.facingDirection = ledgeGrab.direction * -1;
             serverGame.ledgeHangTimers[playerId] = LEDGE_GRAB_DURATION;
-            
-            Matter.Body.setStatic(body, true); // Freeze body
-            // Snap to ledge position
+            Matter.Body.setStatic(body, true);
             const newPos = { x: ledgeGrab.x + player.width/2, y: ledgeGrab.y + player.height/2 };
             Matter.Body.setPosition(body, newPos);
             continue;
         }
 
-        // --- Grounded Movement ---
         const moveMultiplier = player.isGuarding ? 0.3 : 1.0;
         if (input.left) {
             Matter.Body.applyForce(body, body.position, { x: -PLAYER_MOVE_FORCE * moveMultiplier, y: 0 });
@@ -200,22 +174,18 @@ function processPlayerInputs() {
             player.facingDirection = 1;
         }
 
-        // --- Jump ---
         if (input.jump && player.isOnGround && !player.isGuarding) {
             Matter.Body.setVelocity(body, { x: body.velocity.x, y: -PLAYER_JUMP_VELOCITY });
             player.isOnGround = false;
         }
 
-        // --- Attacks and Guarding (logic is mostly the same, but applies forces) ---
         const opp = serverGame.players[playerId === "player1" ? "player2" : "player1"];
         const oppBody = opp ? physicsBodies[opp.id] : null;
 
-        // Guard
         if (input.guard && serverGame.guardActiveTimers[playerId] <= 0 && serverGame.guardCooldowns[playerId] <= 0) {
             serverGame.guardCooldowns[playerId] = GUARD_COOLDOWN; serverGame.guardActiveTimers[playerId] = GUARD_DURATION; player.isGuarding = true;
         }
 
-        // Basic Attack
         if (input.basicAttack && serverGame.basicAttackActiveTimers[playerId] <= 0 && serverGame.basicAttackCooldowns[playerId] <= 0 && !player.isGuarding) { 
             serverGame.basicAttackCooldowns[playerId] = BASIC_ATTACK_COOLDOWN; serverGame.basicAttackActiveTimers[playerId] = BASIC_ATTACK_DURATION; player.isBasicAttacking = true; 
             const charStats = characterAttacks[player.type];
@@ -226,74 +196,54 @@ function processPlayerInputs() {
                 } else {
                     opp.percentage += charStats.basicDamage;
                     const kbForce = (BASE_KNOCKBACK + (opp.percentage * KNOCKBACK_SCALING)) * charStats.basicKnockback;
-                    const angle = -Math.PI / 4; // 45 degrees up
+                    const angle = -Math.PI / 4;
                     const force = { x: player.facingDirection * kbForce * Math.cos(angle), y: kbForce * Math.sin(angle) };
                     Matter.Body.applyForce(oppBody, oppBody.position, force);
                     opp.isOnGround = false;
                 }
             }
         }
-        // Special attacks would follow the same pattern of applying forces...
     }
 }
 
-// --- NEW: Reads data from Matter.js bodies back into our game state ---
 function updateStateFromPhysics() {
     for (const playerId in serverGame.players) {
         const player = serverGame.players[playerId];
         const body = physicsBodies[playerId];
         if (!player || !body) continue;
 
-        // Don't update from physics if hanging on a ledge
         if (player.isLedgeHanging) {
-            player.vx = 0;
-            player.vy = 0;
+            player.vx = 0; player.vy = 0;
             continue;
         }
 
-        // Update position from the center of the physics body
         player.x = body.position.x - player.width / 2;
         player.y = body.position.y - player.height / 2;
-        
-        // Update velocity for client-side interpolation
         player.vx = body.velocity.x;
         player.vy = body.velocity.y;
     }
 }
 
-// --- NEW: Ground check using collision events ---
 Matter.Events.on(engine, 'collisionStart', (event) => {
     const pairs = event.pairs;
     for (let i = 0; i < pairs.length; i++) {
         const pair = pairs[i];
-        let playerBody, platformBody;
-
-        if (pair.bodyA.label.startsWith('player') && pair.bodyB.label.startsWith('platform')) {
-            playerBody = pair.bodyA;
-            platformBody = pair.bodyB;
-        } else if (pair.bodyB.label.startsWith('player') && pair.bodyA.label.startsWith('platform')) {
-            playerBody = pair.bodyB;
-            platformBody = pair.bodyA;
-        }
-
+        let playerBody;
+        if (pair.bodyA.label.startsWith('player') && pair.bodyB.label.startsWith('platform')) { playerBody = pair.bodyA; } 
+        else if (pair.bodyB.label.startsWith('player') && pair.bodyA.label.startsWith('platform')) { playerBody = pair.bodyB; }
         if (playerBody) {
             const player = serverGame.players[playerBody.label];
-            // Check if collision is from the top
-            if (player && pair.collision.normal.y < -0.5) {
-                player.isOnGround = true;
-            }
+            if (player && pair.collision.normal.y < -0.5) player.isOnGround = true;
         }
     }
 });
 Matter.Events.on(engine, 'collisionEnd', (event) => {
-    // This is simpler; if a player stops touching anything, they might not be on the ground.
-    // A more robust solution would check ALL active collisions.
     const pairs = event.pairs;
     for (let i = 0; i < pairs.length; i++) {
         const pair = pairs[i];
          if (pair.bodyA.label.startsWith('player')) {
             const player = serverGame.players[pair.bodyA.label];
-            if(player) player.isOnGround = false; // Assume not on ground, will be re-set to true if touching
+            if(player) player.isOnGround = false;
         }
          if (pair.bodyB.label.startsWith('player')) {
             const player = serverGame.players[pair.bodyB.label];
@@ -301,10 +251,6 @@ Matter.Events.on(engine, 'collisionEnd', (event) => {
         }
     }
 });
-
-
-// --- Functions for managing game state, rounds, matches ---
-// (These are mostly unchanged, but reset functions now also handle the physics world)
 
 function checkServerWinConditions() {
     if (serverGame.state !== "playing") return;
@@ -325,7 +271,6 @@ function resetServerPlayerState(player) {
     const sP = serverGame.stage.spawnPoints[sI];
     if (!sP) {console.error(`Spawn ${sI} missing`); return;}
     
-    // --- NEW: Reset physics body position and velocity ---
     const body = physicsBodies[player.id];
     if (body) {
         Matter.Body.setStatic(body, false);
@@ -340,7 +285,6 @@ function resetServerPlayerState(player) {
     player.isBasicAttacking = false; player.isSpecialAttacking = false; player.isGuarding = false;
     player.isLedgeHanging = false; player.ledgePlatform = null; player.ledgeDirection = 0;
     
-    // Reset timers
     for (const key in serverGame) {
         if (key.endsWith('s') && serverGame[key][player.id] !== undefined) {
             serverGame[key][player.id] = 0;
@@ -351,26 +295,22 @@ function resetServerPlayerState(player) {
 function resetServerRoundState() {
     console.log("[Server] Resetting Round State.");
     
-    // --- NEW: Clear old physics bodies for the stage ---
-    Matter.World.clear(engine.world, false); // false keeps the engine, just clears bodies
-    engine.world.gravity.y = 1.2; // Re-assert gravity
+    Matter.World.clear(engine.world, false);
+    engine.world.gravity.y = 1.2;
 
     const randomStageKey = stageKeys[Math.floor(Math.random() * stageKeys.length)];
     serverGame.stage = stages[randomStageKey];
     console.log(`[Server] New Round Stage: ${serverGame.stage.name}`);
 
-    // --- NEW: Create physics bodies for the new stage platforms ---
     const platformBodies = serverGame.stage.platforms.map((p, i) =>
         Matter.Bodies.rectangle(p.x + p.width / 2, p.y + p.height / 2, p.width, p.height, {
-            isStatic: true,
-            label: `platform-${i}`
+            isStatic: true, label: `platform-${i}`
         })
     );
     Matter.World.add(engine.world, platformBodies);
     
     for (const pId in serverGame.players) { 
         const player = serverGame.players[pId];
-        // Re-add player bodies to the new world
         if (physicsBodies[pId]) Matter.World.add(engine.world, physicsBodies[pId]);
         resetServerPlayerState(player); 
     }
@@ -385,11 +325,8 @@ function handleServerRoundEnd(winner, loser) {
     serverGame.match.roundWinnerId=winner.id;
     const wI=winner.id==="player1"?0:1;
     serverGame.match.scores[wI]++;
-    if (serverGame.match.scores[wI]>=ROUNDS_TO_WIN_MATCH) {
-        handleServerMatchEnd(winner);
-    } else {
-        serverGame.pendingRoundReset=true;
-    }
+    if (serverGame.match.scores[wI]>=ROUNDS_TO_WIN_MATCH) { handleServerMatchEnd(winner); } 
+    else { serverGame.pendingRoundReset=true; }
 }
 
 function handleServerMatchEnd(winner) {
@@ -402,21 +339,22 @@ function handleServerMatchEnd(winner) {
 function resetServerMatchAndStartNew() {
     console.log("[Server] Resetting Full Match and Starting New...");
     
-    // Clear player objects and physics bodies map
     serverGame.players = {};
-    for (const key in physicsBodies) {
-        delete physicsBodies[key];
-    }
+    for (const key in physicsBodies) { delete physicsBodies[key]; }
     
     serverGame.match.scores = [0, 0];
     serverGame.match.roundWinnerId = null;
     serverGame.match.matchWinnerId = null;
 
     if (clients.size === 2) {
+        // --- THE FIX: Reorder the logic ---
+        // 1. Set up the round first (which selects the stage)
+        resetServerRoundState();
+
+        // 2. NOW create the players, which can safely use the stage's spawn points
         serverGame.players.player1 = createPlayer("player1", "RED_KNIGHT");
         serverGame.players.player2 = createPlayer("player2", "BLUE_NINJA");
-        
-        resetServerRoundState();
+        // --- END FIX ---
 
         serverGame.state = "playing";
         serverGame.pendingMatchReset = false;
@@ -433,8 +371,6 @@ function resetServerMatchAndStartNew() {
     }
 }
 
-// WebSocket and broadcasting logic remains the same as it's decoupled from the physics implementation.
-// ... (The rest of your WebSocket server code from ws.on('connection') onwards is unchanged)
 // --- WebSocket Server Setup ---
 const wss = new WebSocket.Server({ port: PORT });
 console.log(`WebSocket server started on port ${PORT}...`);
