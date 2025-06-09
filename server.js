@@ -7,8 +7,8 @@ const Matter = require('matter-js');
 const GAME_WIDTH = 800; const GAME_HEIGHT = 600;
 const PLAYER_JUMP_VELOCITY = 16;
 // --- FIX #1: Increased movement forces for a more responsive feel ---
-const PLAYER_MOVE_FORCE = 0.012; // Increased from 0.005
-const AIR_CONTROL_FORCE = 0.008; // Increased from 0.003
+const PLAYER_MOVE_FORCE = 0.016; // Increased from 0.005
+const AIR_CONTROL_FORCE = 0.012; // Increased from 0.003
 const GROUND_FRICTION = 0.90; 
 
 const BASE_KNOCKBACK = 0.1; 
