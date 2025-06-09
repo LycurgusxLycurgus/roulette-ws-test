@@ -1,4 +1,4 @@
-// server.js - Phase 2: Final Physics Polish
+// server.js - Phase 2: Final Physics Polish & Tuning
 
 const WebSocket = require('ws');
 const Matter = require('matter-js');
@@ -6,14 +6,13 @@ const Matter = require('matter-js');
 // --- Game Constants ---
 const GAME_WIDTH = 800; const GAME_HEIGHT = 600;
 const PLAYER_JUMP_VELOCITY = 16;
-// --- FIX #1: Tuned movement forces for a better feel ---
-const PLAYER_MOVE_FORCE = 0.005; // Increased force for better acceleration
-const AIR_CONTROL_FORCE = 0.003; // Increased force for more responsive air control
-const GROUND_FRICTION = 0.90; // Friction to prevent sliding (90% of velocity retained each frame)
+// --- FIX #1: Increased movement forces for a more responsive feel ---
+const PLAYER_MOVE_FORCE = 0.008; // Increased from 0.005
+const AIR_CONTROL_FORCE = 0.004; // Increased from 0.003
+const GROUND_FRICTION = 0.90; 
 
-// --- FIX #2: Significantly increased knockback values ---
-const BASE_KNOCKBACK = 0.1; // Base force of any hit
-const KNOCKBACK_SCALING = 0.001; // How much damage % adds to knockback
+const BASE_KNOCKBACK = 0.1; 
+const KNOCKBACK_SCALING = 0.001; 
 
 // Attack system constants
 const BASIC_ATTACK_DAMAGE = 5; 
@@ -98,7 +97,6 @@ function createPlayer(id, type) {
 }
 
 function checkLedgeGrab(player) {
-    // --- FIX #3: Prevent ledge grab while on the ground ---
     if (!serverGame.stage || player.isOnGround || player.isLedgeHanging) return null;
     
     const body = physicsBodies[player.id];
@@ -194,7 +192,6 @@ function processPlayerInputs() {
 
         const moveMultiplier = player.isGuarding ? 0.3 : 1.0;
         
-        // --- FIX #1: Universal applyForce model for natural movement ---
         const currentMoveForce = player.isOnGround ? PLAYER_MOVE_FORCE : AIR_CONTROL_FORCE;
         if (input.left) {
             Matter.Body.applyForce(body, body.position, { x: -currentMoveForce * moveMultiplier, y: 0 });
@@ -203,7 +200,6 @@ function processPlayerInputs() {
             Matter.Body.applyForce(body, body.position, { x: currentMoveForce * moveMultiplier, y: 0 });
             player.facingDirection = 1;
         } else if (player.isOnGround) {
-            // Apply friction only when on ground and no input is pressed
             Matter.Body.setVelocity(body, { x: body.velocity.x * GROUND_FRICTION, y: body.velocity.y });
         }
 
@@ -224,7 +220,6 @@ function processPlayerInputs() {
             serverGame.basicAttackCooldowns[playerId] = BASIC_ATTACK_COOLDOWN; serverGame.basicAttackActiveTimers[playerId] = BASIC_ATTACK_DURATION; player.isBasicAttacking = true; 
             const attackBox = { x: player.facingDirection === 1 ? player.x + player.width : player.x - charStats.basicRange, y: player.y, width: charStats.basicRange, height: player.height };
             if (opp && oppBody && checkCollision(attackBox, opp)) {
-                // --- FIX #3: Break ledge hang on hit ---
                 if (opp.isLedgeHanging) {
                     releaseLedgeGrab(opp, -1);
                 }
@@ -247,7 +242,7 @@ function processPlayerInputs() {
             if (player.type === "RED_KNIGHT") {
                 const groundPoundArea = { x: player.x - 40, y: player.y + player.height, width: player.width + 80, height: 60 };
                 if (opp && oppBody && checkCollision(groundPoundArea, opp)) {
-                    if (opp.isLedgeHanging) releaseLedgeGrab(opp, 0); // Drop down
+                    if (opp.isLedgeHanging) releaseLedgeGrab(opp, 0);
                     if (opp.isGuarding) { Matter.Body.applyForce(oppBody, oppBody.position, { x: player.facingDirection * 0.015, y: -0.015 }); }
                     else {
                         opp.percentage += charStats.specialDamage;
@@ -257,12 +252,9 @@ function processPlayerInputs() {
                     }
                 }
             } else if (player.type === "BLUE_NINJA") {
-                // --- FIX #4: Conditional Blue Ninja special move ---
-                if (player.isOnGround) {
-                    Matter.Body.setVelocity(body, { x: player.facingDirection * 12, y: -2 });
-                } else {
-                    Matter.Body.setVelocity(body, { x: player.facingDirection * 18, y: 0 });
-                }
+                // --- FIX #2: Unified Blue Ninja special for consistent feel ---
+                Matter.Body.setVelocity(body, { x: player.facingDirection * 12, y: -2 });
+                
                 const dashAttackArea = { x: player.facingDirection === 1 ? player.x : player.x - charStats.specialRange, y: player.y, width: charStats.specialRange, height: player.height };
                 if (opp && oppBody && checkCollision(dashAttackArea, opp)) {
                     if (opp.isLedgeHanging) releaseLedgeGrab(opp, -1);
