@@ -1,4 +1,4 @@
-// server.js - Phase 2: Definitive Physics with Enhanced Logging
+// server.js - Phase 2: Final Physics Polish
 
 const WebSocket = require('ws');
 const Matter = require('matter-js');
@@ -6,9 +6,14 @@ const Matter = require('matter-js');
 // --- Game Constants ---
 const GAME_WIDTH = 800; const GAME_HEIGHT = 600;
 const PLAYER_JUMP_VELOCITY = 16;
-const AIR_CONTROL_FORCE = 0.002; 
-const BASE_KNOCKBACK = 0.06;
-const KNOCKBACK_SCALING = 0.0006;
+// --- FIX #1: Tuned movement forces for a better feel ---
+const PLAYER_MOVE_FORCE = 0.005; // Increased force for better acceleration
+const AIR_CONTROL_FORCE = 0.003; // Increased force for more responsive air control
+const GROUND_FRICTION = 0.90; // Friction to prevent sliding (90% of velocity retained each frame)
+
+// --- FIX #2: Significantly increased knockback values ---
+const BASE_KNOCKBACK = 0.1; // Base force of any hit
+const KNOCKBACK_SCALING = 0.001; // How much damage % adds to knockback
 
 // Attack system constants
 const BASIC_ATTACK_DAMAGE = 5; 
@@ -93,7 +98,9 @@ function createPlayer(id, type) {
 }
 
 function checkLedgeGrab(player) {
+    // --- FIX #3: Prevent ledge grab while on the ground ---
     if (!serverGame.stage || player.isOnGround || player.isLedgeHanging) return null;
+    
     const body = physicsBodies[player.id];
     if (!body || body.velocity.y <= 0) return null;
     
@@ -187,24 +194,17 @@ function processPlayerInputs() {
 
         const moveMultiplier = player.isGuarding ? 0.3 : 1.0;
         
-        if (player.isOnGround) {
-            let targetVelocityX = 0;
-            if (input.left) {
-                targetVelocityX = -player.moveSpeed * moveMultiplier;
-                player.facingDirection = -1;
-            } else if (input.right) {
-                targetVelocityX = player.moveSpeed * moveMultiplier;
-                player.facingDirection = 1;
-            }
-            Matter.Body.setVelocity(body, { x: targetVelocityX, y: body.velocity.y });
-        } else {
-            if (input.left) {
-                Matter.Body.applyForce(body, body.position, { x: -AIR_CONTROL_FORCE * moveMultiplier, y: 0 });
-                player.facingDirection = -1;
-            } else if (input.right) {
-                Matter.Body.applyForce(body, body.position, { x: AIR_CONTROL_FORCE * moveMultiplier, y: 0 });
-                player.facingDirection = 1;
-            }
+        // --- FIX #1: Universal applyForce model for natural movement ---
+        const currentMoveForce = player.isOnGround ? PLAYER_MOVE_FORCE : AIR_CONTROL_FORCE;
+        if (input.left) {
+            Matter.Body.applyForce(body, body.position, { x: -currentMoveForce * moveMultiplier, y: 0 });
+            player.facingDirection = -1;
+        } else if (input.right) {
+            Matter.Body.applyForce(body, body.position, { x: currentMoveForce * moveMultiplier, y: 0 });
+            player.facingDirection = 1;
+        } else if (player.isOnGround) {
+            // Apply friction only when on ground and no input is pressed
+            Matter.Body.setVelocity(body, { x: body.velocity.x * GROUND_FRICTION, y: body.velocity.y });
         }
 
         if (input.jump && player.isOnGround && !player.isGuarding) {
@@ -224,6 +224,10 @@ function processPlayerInputs() {
             serverGame.basicAttackCooldowns[playerId] = BASIC_ATTACK_COOLDOWN; serverGame.basicAttackActiveTimers[playerId] = BASIC_ATTACK_DURATION; player.isBasicAttacking = true; 
             const attackBox = { x: player.facingDirection === 1 ? player.x + player.width : player.x - charStats.basicRange, y: player.y, width: charStats.basicRange, height: player.height };
             if (opp && oppBody && checkCollision(attackBox, opp)) {
+                // --- FIX #3: Break ledge hang on hit ---
+                if (opp.isLedgeHanging) {
+                    releaseLedgeGrab(opp, -1);
+                }
                 if (opp.isGuarding) { Matter.Body.applyForce(oppBody, oppBody.position, { x: player.facingDirection * 0.01, y: -0.01 }); } 
                 else {
                     opp.percentage += charStats.basicDamage;
@@ -243,6 +247,7 @@ function processPlayerInputs() {
             if (player.type === "RED_KNIGHT") {
                 const groundPoundArea = { x: player.x - 40, y: player.y + player.height, width: player.width + 80, height: 60 };
                 if (opp && oppBody && checkCollision(groundPoundArea, opp)) {
+                    if (opp.isLedgeHanging) releaseLedgeGrab(opp, 0); // Drop down
                     if (opp.isGuarding) { Matter.Body.applyForce(oppBody, oppBody.position, { x: player.facingDirection * 0.015, y: -0.015 }); }
                     else {
                         opp.percentage += charStats.specialDamage;
@@ -252,9 +257,15 @@ function processPlayerInputs() {
                     }
                 }
             } else if (player.type === "BLUE_NINJA") {
+                // --- FIX #4: Conditional Blue Ninja special move ---
+                if (player.isOnGround) {
+                    Matter.Body.setVelocity(body, { x: player.facingDirection * 12, y: -2 });
+                } else {
+                    Matter.Body.setVelocity(body, { x: player.facingDirection * 18, y: 0 });
+                }
                 const dashAttackArea = { x: player.facingDirection === 1 ? player.x : player.x - charStats.specialRange, y: player.y, width: charStats.specialRange, height: player.height };
-                Matter.Body.setVelocity(body, { x: player.facingDirection * 15, y: -2 });
                 if (opp && oppBody && checkCollision(dashAttackArea, opp)) {
+                    if (opp.isLedgeHanging) releaseLedgeGrab(opp, -1);
                     if (opp.isGuarding) { Matter.Body.applyForce(oppBody, oppBody.position, { x: player.facingDirection * 0.02, y: -0.01 }); }
                     else {
                         opp.percentage += charStats.specialDamage;
@@ -347,7 +358,6 @@ function resetServerPlayerState(player) {
 }
 
 function resetServerRoundState() {
-    // --- LOGGING: Announce the start of the reset ---
     console.log("--- [SVR] Starting Round Reset ---");
     
     Matter.World.clear(engine.world, false);
@@ -365,13 +375,11 @@ function resetServerRoundState() {
     );
     Matter.World.add(engine.world, platformBodies);
     
-    // --- FIX: Recreate players for a clean slate ---
     const oldPlayerTypes = {
         player1: serverGame.players.player1?.type || "RED_KNIGHT",
         player2: serverGame.players.player2?.type || "BLUE_NINJA"
     };
 
-    // Clean up old bodies from our map
     for (const pId in physicsBodies) {
         delete physicsBodies[pId];
     }
@@ -394,7 +402,6 @@ function resetServerRoundState() {
 
 function handleServerRoundEnd(winner, loser) {
     if (serverGame.state !== "playing") return;
-    // --- LOGGING: Announce winner/loser ---
     console.log(`[SVR LOG] Round End. Winner: ${winner.id}, Loser: ${loser.id}`);
     serverGame.state="roundOver";
     serverGame.match.roundWinnerId=winner.id;
@@ -422,7 +429,6 @@ function resetServerMatchAndStartNew() {
     serverGame.match.matchWinnerId = null;
 
     if (clients.size === 2) {
-        // This function now handles everything needed for the first round
         resetServerRoundState();
 
         serverGame.state = "playing";
@@ -435,7 +441,6 @@ function resetServerMatchAndStartNew() {
         }
     } else {
         console.log("[Server] Need 2 players to start new match.");
-        serverGame.state = "waiting";
         if (gameLoopInterval) { clearInterval(gameLoopInterval); gameLoopInterval = null; }
     }
 }
