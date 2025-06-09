@@ -11,7 +11,8 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
-    "ws": "^8.18.2",
-    "dotenv": "^X.X.X"
+    "dotenv": "^X.X.X",
+    "pixi.js": "^8.2.5",
+    "ws": "^8.18.2"
   }
 }

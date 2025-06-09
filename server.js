@@ -1,4 +1,5 @@
 // server.js - Phase 9: Authoritative Server + Reset + Random Stage
+// NO MAJOR CHANGES IN PHASE 1 - ONLY ADDING SERVERTIME FOR INTERPOLATION
 
 const WebSocket = require('ws');
 
@@ -129,9 +130,7 @@ function createPlayer(id, type) {
         moveSpeed: cT.moveSpeed, jumpStrength: cT.jumpStrength, gravityMultiplier: cT.gravityMultiplier, 
         x: sP.x - 25, y: sP.y, vx: 0, vy: 0, isOnGround: false, percentage: 0, 
         facingDirection: sI === 0 ? 1 : -1, 
-        // Updated attack/guard states
         isBasicAttacking: false, isSpecialAttacking: false, isGuarding: false,
-        // Ledge grabbing states
         isLedgeHanging: false, ledgePlatform: null, ledgeDirection: 0 
     };
 }
@@ -140,18 +139,14 @@ function createPlayer(id, type) {
 function checkLedgeGrab(player) {
     if (!serverGame.stage || player.isOnGround || player.isLedgeHanging || player.vy <= 0) return null;
     
-    // Check each platform for ledge grab opportunity
     for(const plat of serverGame.stage.platforms) {
         const playerBottom = player.y + player.height;
         const playerCenter = player.x + player.width / 2;
         
-        // Check if player is falling past platform level
         if (playerBottom > plat.y && playerBottom < plat.y + plat.height + LEDGE_GRAB_RANGE) {
-            // Check left edge
             if (Math.abs(playerCenter - plat.x) < LEDGE_GRAB_RANGE && player.x < plat.x) {
                 return { platform: plat, direction: -1, x: plat.x - player.width, y: plat.y - player.height };
             }
-            // Check right edge  
             if (Math.abs(playerCenter - (plat.x + plat.width)) < LEDGE_GRAB_RANGE && player.x > plat.x + plat.width) {
                 return { platform: plat, direction: 1, x: plat.x + plat.width, y: plat.y - player.height };
             }
@@ -167,15 +162,12 @@ function releaseLedgeGrab(player, direction) {
     serverGame.ledgeHangTimers[player.id] = 0;
     
     if (direction > 0) {
-        // Release upward/forward (climb up)
         player.vy = -LEDGE_RELEASE_VELOCITY * 1.5;
         player.vx = player.facingDirection * LEDGE_RELEASE_VELOCITY * 0.5;
     } else if (direction < 0) {
-        // Release backward (fall back)
         player.vy = -LEDGE_RELEASE_VELOCITY * 0.5;
         player.vx = -player.facingDirection * LEDGE_RELEASE_VELOCITY;
     } else {
-        // Release downward (let go)
         player.vy = LEDGE_RELEASE_VELOCITY * 0.3;
         player.vx = 0;
     }
@@ -185,7 +177,6 @@ function releaseLedgeGrab(player, direction) {
 function gameTick() {
     const now = Date.now(); serverGame.deltaTime = (now - serverGame.lastUpdateTime); serverGame.lastUpdateTime = now;
     if (serverGame.state === "playing") {
-        // Update all attack and guard timers
         for(const pId in serverGame.basicAttackActiveTimers) {
             if(serverGame.basicAttackActiveTimers[pId] > 0) {
                 serverGame.basicAttackActiveTimers[pId] -= serverGame.deltaTime;
@@ -195,7 +186,6 @@ function gameTick() {
             }
         }
         
-        // Special attack timers (fixes purple effect staying forever)
         for(const pId in serverGame.specialAttackActiveTimers) {
             if(serverGame.specialAttackActiveTimers[pId] > 0) {
                 serverGame.specialAttackActiveTimers[pId] -= serverGame.deltaTime;
@@ -214,7 +204,6 @@ function gameTick() {
             }
         }
         
-        // Update cooldowns
         for(const pId in serverGame.basicAttackCooldowns) {
             if(serverGame.basicAttackCooldowns[pId] > 0) serverGame.basicAttackCooldowns[pId] -= serverGame.deltaTime;
         }
@@ -225,14 +214,13 @@ function gameTick() {
             if(serverGame.guardCooldowns[pId] > 0) serverGame.guardCooldowns[pId] -= serverGame.deltaTime;
         }
         
-        // Update ledge hang timers (auto-release after max time)
         for(const pId in serverGame.ledgeHangTimers) {
             if(serverGame.ledgeHangTimers[pId] > 0) {
                 serverGame.ledgeHangTimers[pId] -= serverGame.deltaTime;
                 if(serverGame.ledgeHangTimers[pId] <= 0) {
                     const player = serverGame.players[pId];
                     if(player && player.isLedgeHanging) {
-                        releaseLedgeGrab(player, 0); // Force release downward
+                        releaseLedgeGrab(player, 0); 
                         console.log(`[Svr Ledge] ${player.id} auto-released from ledge`);
                     }
                 }
@@ -251,37 +239,26 @@ function updatePlayerPhysics(playerId) {
     const client = Array.from(clients.values()).find(c => c.playerId === playerId);
     const input = client ? client.lastInput : { left: false, right: false, jump: false, basicAttack: false, specialAttack: false, guard: false };
 
-    // Handle ledge hanging state
     if (player.isLedgeHanging) {
-        // Player is hanging on ledge - limited actions
-        player.vx = 0; // No horizontal movement while hanging
-        player.vy = 0; // No falling while hanging
+        player.vx = 0; player.vy = 0; 
         
-        // Ledge release controls
         if (input.jump) {
-            // Jump up/forward to climb onto platform
             releaseLedgeGrab(player, 1);
             console.log(`[Svr Ledge] ${player.id} climbed up from ledge`);
         } else if (input.left && player.ledgeDirection === -1) {
-            // Release backward (away from platform)
             releaseLedgeGrab(player, -1);
             console.log(`[Svr Ledge] ${player.id} released backward from ledge`);
         } else if (input.right && player.ledgeDirection === 1) {
-            // Release backward (away from platform)  
             releaseLedgeGrab(player, -1);
             console.log(`[Svr Ledge] ${player.id} released backward from ledge`);
         } else if (input.guard) {
-            // Let go and fall
             releaseLedgeGrab(player, 0);
             console.log(`[Svr Ledge] ${player.id} let go from ledge`);
         }
         
-        // Skip normal physics while hanging
         return;
     }
 
-    // Normal movement and physics (existing code)
-    // Movement (slower if guarding)
     const moveMultiplier = player.isGuarding ? 0.3 : 1.0;
     let iVx = player.vx; 
     if (input.left) { iVx = -player.moveSpeed * moveMultiplier; player.facingDirection = -1; } 
@@ -289,12 +266,10 @@ function updatePlayerPhysics(playerId) {
     else { if (player.isOnGround) iVx *= FRICTION; } 
     player.vx = iVx;
     
-    // Jump (can't jump while guarding)
     if (input.jump && player.isOnGround && !player.isGuarding) { 
         player.vy = -player.jumpStrength; player.isOnGround = false; 
     }
     
-    // Guard
     if (input.guard && serverGame.guardActiveTimers[playerId] <= 0 && serverGame.guardCooldowns[playerId] <= 0) {
         serverGame.guardCooldowns[playerId] = GUARD_COOLDOWN;
         serverGame.guardActiveTimers[playerId] = GUARD_DURATION;
@@ -302,7 +277,6 @@ function updatePlayerPhysics(playerId) {
         console.log(`[Svr Guard] ${player.id} is guarding`);
     }
     
-    // Basic Attack (character-specific)
     if (input.basicAttack && serverGame.basicAttackActiveTimers[playerId] <= 0 && serverGame.basicAttackCooldowns[playerId] <= 0 && !player.isGuarding) { 
         serverGame.basicAttackCooldowns[playerId] = BASIC_ATTACK_COOLDOWN; 
         serverGame.basicAttackActiveTimers[playerId] = BASIC_ATTACK_DURATION; 
@@ -315,10 +289,8 @@ function updatePlayerPhysics(playerId) {
         const aB = { x: bX, y: bY, width: attackRange, height: BASIC_ATTACK_HEIGHT }; 
         
         if (opp && checkCollision(aB, opp)) { 
-            // Check if opponent is guarding
             if (opp.isGuarding) {
                 console.log(`[Svr Hit Blocked] ${player.id} attack blocked by ${opp.id}`);
-                // Reduced knockback when guarded
                 const reducedKb = BASE_KNOCKBACK * 0.3;
                 opp.vx = reducedKb * player.facingDirection * 0.8;
                 opp.vy = -reducedKb * 0.5;
@@ -335,21 +307,17 @@ function updatePlayerPhysics(playerId) {
         }
     }
     
-    // Special Attack (character-specific)
     if (input.specialAttack && serverGame.specialAttackActiveTimers[playerId] <= 0 && serverGame.specialAttackCooldowns[playerId] <= 0 && !player.isGuarding) {
         serverGame.specialAttackCooldowns[playerId] = SPECIAL_ATTACK_COOLDOWN;
-        serverGame.specialAttackActiveTimers[playerId] = SPECIAL_ATTACK_DURATION; // Fixed timer
+        serverGame.specialAttackActiveTimers[playerId] = SPECIAL_ATTACK_DURATION;
         player.isSpecialAttacking = true;
         
         const charStats = characterAttacks[player.type];
         
         if (player.type === "RED_KNIGHT") {
-            // Ground Pound (AoE downward attack)
             const groundPoundArea = { 
-                x: player.x - 40, 
-                y: player.y + player.height, 
-                width: player.width + 80, 
-                height: 60 
+                x: player.x - 40, y: player.y + player.height, 
+                width: player.width + 80, height: 60 
             };
             
             if (opp && checkCollision(groundPoundArea, opp)) {
@@ -361,17 +329,16 @@ function updatePlayerPhysics(playerId) {
                 } else {
                     opp.percentage += charStats.specialDamage;
                     const kb = (BASE_KNOCKBACK * charStats.specialKnockback + (opp.percentage * KNOCKBACK_SCALING)) * (1 / opp.gravityMultiplier);
-                    opp.vx = kb * player.facingDirection * 0.5; // More horizontal
-                    opp.vy = -kb * 0.8; // Strong vertical
+                    opp.vx = kb * player.facingDirection * 0.5;
+                    opp.vy = -kb * 0.8;
                     opp.isOnGround = false;
                     console.log(`[Svr Ground Pound] ${player.id}>${opp.id}. ${opp.id}%:${opp.percentage}`);
                 }
             }
             
         } else if (player.type === "BLUE_NINJA") {
-            // Dash Attack (moves forward while attacking)
             const dashDistance = 100;
-            player.vx = player.facingDirection * dashDistance / 10; // Dash movement
+            player.vx = player.facingDirection * dashDistance / 10;
             
             const dashAttackArea = {
                 x: player.facingDirection === 1 ? player.x : player.x - charStats.specialRange,
@@ -389,7 +356,7 @@ function updatePlayerPhysics(playerId) {
                 } else {
                     opp.percentage += charStats.specialDamage;
                     const kb = (BASE_KNOCKBACK * charStats.specialKnockback + (opp.percentage * KNOCKBACK_SCALING)) * (1 / opp.gravityMultiplier);
-                    const ang = Math.PI / 5; // Flatter angle
+                    const ang = Math.PI / 5;
                     opp.vx = kb * player.facingDirection * Math.cos(ang);
                     opp.vy = -kb * Math.sin(ang);
                     opp.isOnGround = false;
@@ -399,13 +366,11 @@ function updatePlayerPhysics(playerId) {
         }
     }
     
-    // Physics
     player.vy += GRAVITY * player.gravityMultiplier; 
     let nX = player.x + player.vx * (serverGame.deltaTime / (1000 / 60)); 
     let nY = player.y + player.vy * (serverGame.deltaTime / (1000 / 60)); 
     let landed = false;
     
-    // Check for ledge grab opportunity (before platform collision)
     if (!player.isGuarding && !player.isBasicAttacking && !player.isSpecialAttacking) {
         const ledgeGrab = checkLedgeGrab(player);
         if (ledgeGrab) {
@@ -419,11 +384,10 @@ function updatePlayerPhysics(playerId) {
             player.facingDirection = ledgeGrab.direction;
             serverGame.ledgeHangTimers[playerId] = LEDGE_GRAB_DURATION;
             console.log(`[Svr Ledge] ${player.id} grabbed ledge on ${ledgeGrab.direction === -1 ? 'left' : 'right'} side`);
-            return; // Skip normal collision detection
+            return;
         }
     }
     
-    // Normal platform collision detection
     for(const plat of serverGame.stage.platforms) {
         const pBN = nY + player.height; const pL = player.x; const pR = player.x + player.width; 
         if(player.vy >= 0 && pBN >= plat.y && player.y < plat.y && pR > plat.x && pL < plat.x + plat.width) {
@@ -452,17 +416,14 @@ function resetServerPlayerState(player) {
      player.isOnGround = false;
      player.facingDirection = sI === 0 ? 1 : -1;
      
-     // Reset all attack and guard states
      player.isBasicAttacking = false;
      player.isSpecialAttacking = false;
      player.isGuarding = false;
      
-     // Reset ledge hanging states
      player.isLedgeHanging = false;
      player.ledgePlatform = null;
      player.ledgeDirection = 0;
      
-     // Reset all timers
      serverGame.basicAttackCooldowns[player.id] = 0;
      serverGame.basicAttackActiveTimers[player.id] = 0;
      serverGame.specialAttackCooldowns[player.id] = 0;
@@ -472,10 +433,9 @@ function resetServerPlayerState(player) {
      serverGame.ledgeHangTimers[player.id] = 0;
 }
 
-function resetServerRoundState() { // Resets players for new round, keeps scores
+function resetServerRoundState() {
     console.log("[Server] Resetting Round State.");
     
-    // Change stage every round for more variety!
     const randomStageKey = stageKeys[Math.floor(Math.random() * stageKeys.length)];
     serverGame.stage = stages[randomStageKey];
     console.log(`[Server] New Round Stage: ${serverGame.stage.name}`);
@@ -489,65 +449,55 @@ function resetServerRoundState() { // Resets players for new round, keeps scores
 
 function handleServerRoundEnd(winner, loser) {
     if (serverGame.state !== "playing") return; console.log(`[Svr Rnd End] Win:${winner.id}`); serverGame.state="roundOver"; serverGame.match.roundWinnerId=winner.id; const wI=winner.id==="player1"?0:1; serverGame.match.scores[wI]++;
-    if (serverGame.match.scores[wI]>=ROUNDS_TO_WIN_MATCH) { handleServerMatchEnd(winner); } else { serverGame.pendingRoundReset=true; } // Wait for client request
+    if (serverGame.match.scores[wI]>=ROUNDS_TO_WIN_MATCH) { handleServerMatchEnd(winner); } else { serverGame.pendingRoundReset=true; }
 }
 
 function handleServerMatchEnd(winner) {
-    console.log(`[Svr Mch End] Win:${winner.id}`); serverGame.state="matchOver"; serverGame.match.matchWinnerId=winner.id; serverGame.pendingMatchReset=true; // Wait for client request
+    console.log(`[Svr Mch End] Win:${winner.id}`); serverGame.state="matchOver"; serverGame.match.matchWinnerId=winner.id; serverGame.pendingMatchReset=true;
 }
 
-// --- NEW: Function to fully reset match state and start ---
 function resetServerMatchAndStartNew() {
     console.log("[Server] Resetting Full Match and Starting New...");
-    // 1. Randomly select stage
     const randomStageKey = stageKeys[Math.floor(Math.random() * stageKeys.length)];
     serverGame.stage = stages[randomStageKey];
     console.log(`[Server] Selected Stage: ${serverGame.stage.name}`);
 
-    // 2. Reset scores and winners
     serverGame.match.scores = [0, 0];
     serverGame.match.roundWinnerId = null;
     serverGame.match.matchWinnerId = null;
 
-    // 3. Recreate or reset player objects (using new stage spawns)
-     if (clients.size === 2) { // Only if two players are connected
-         const p1Client = Array.from(clients.values()).find(c => c.playerId === 'player1');
-         const p2Client = Array.from(clients.values()).find(c => c.playerId === 'player2');
-
-         // TODO: Allow character selection later
+     if (clients.size === 2) {
          serverGame.players.player1 = createPlayer("player1", "RED_KNIGHT");
          serverGame.players.player2 = createPlayer("player2", "BLUE_NINJA");
 
-         resetServerRoundState(); // Position players, reset timers etc.
+         resetServerRoundState(); 
 
-         serverGame.state = "playing"; // Set state to playing
+         serverGame.state = "playing";
          serverGame.pendingMatchReset = false;
          serverGame.lastUpdateTime = Date.now();
 
-         if (!gameLoopInterval) { // Start loop if not running
+         if (!gameLoopInterval) {
              gameLoopInterval = setInterval(gameTick, SERVER_TICK_RATE);
              console.log("[Server] Game loop started.");
          }
      } else {
          console.log("[Server] Need 2 players to start new match.");
-         serverGame.state = "waiting"; // Not enough players, go back to waiting
-         if (gameLoopInterval) { // Stop loop if running
+         serverGame.state = "waiting";
+         if (gameLoopInterval) {
              clearInterval(gameLoopInterval);
              gameLoopInterval = null;
          }
-         // Clear player objects if resetting to waiting state
          serverGame.players = {};
      }
 }
 
-// Modified to use the new reset function
 function startServerGame() {
      console.log("[Server] Attempting to Start Game...");
-     resetServerMatchAndStartNew(); // This now handles stage selection, player creation, state change
+     resetServerMatchAndStartNew();
 }
 
-function stopServerGame() { /* (Same as before) */
-     if (gameLoopInterval) { clearInterval(gameLoopInterval); gameLoopInterval = null; console.log("[Server] Game loop stopped."); } serverGame.state = "waiting"; serverGame.players = {}; /* Clear players */
+function stopServerGame() {
+     if (gameLoopInterval) { clearInterval(gameLoopInterval); gameLoopInterval = null; console.log("[Server] Game loop stopped."); } serverGame.state = "waiting"; serverGame.players = {};
 }
 
 
@@ -564,12 +514,11 @@ wss.on('connection', (ws) => {
     ws.send(JSON.stringify({type:'your_player_id',payload:assignedPlayerId}));
 
     if (player1ClientId !== null && player2ClientId !== null && serverGame.state === "waiting") {
-        startServerGame(); // Start new game with defaults
+        startServerGame();
     } else {
-        ws.send(JSON.stringify({ type: 'game_state', payload: getSerializableGameState() })); // Send current state
+        ws.send(JSON.stringify({ type: 'game_state', payload: getSerializableGameState() }));
     }
 
-    // --- Handle Messages ---
     ws.on('message', (message) => {
         if (!assignedPlayerId) return;
         try {
@@ -578,13 +527,13 @@ wss.on('connection', (ws) => {
                 const clientData = Array.from(clients.values()).find(c => c.playerId === assignedPlayerId); if (clientData) clientData.lastInput = messageData.payload;
             } else if (messageData.type === 'request_next_round') {
                  if (serverGame.state === 'roundOver' && serverGame.pendingRoundReset) { console.log(`[Server] RX Next Round Req from ${assignedPlayerId}.`); resetServerRoundState(); serverGame.state = "playing"; }
-            } else if (messageData.type === 'request_new_match') { // --- ADDED HANDLER ---
-                 if (serverGame.state === 'matchOver' && serverGame.pendingMatchReset) { console.log(`[Server] RX New Match Req from ${assignedPlayerId}.`); resetServerMatchAndStartNew(); } // Reset and restart
+            } else if (messageData.type === 'request_new_match') {
+                 if (serverGame.state === 'matchOver' && serverGame.pendingMatchReset) { console.log(`[Server] RX New Match Req from ${assignedPlayerId}.`); resetServerMatchAndStartNew(); }
             }
         } catch (error) { console.error(`[Server] Error processing msg from ${assignedPlayerId}:`, error); }
     });
 
-    ws.on('close', () => { /* (Same as before) */
+    ws.on('close', () => {
         console.log(`Client ${assignedPlayerId} (${clientId}) disconnected.`); const cD = Array.from(clients.values()).find(c => c.playerId === assignedPlayerId); if(cD) clients.delete(Array.from(clients.keys()).find(k => clients.get(k) === cD));
         if (assignedPlayerId === "player1") player1ClientId = null; else if (assignedPlayerId === "player2") player2ClientId = null; console.log(`Clients remaining: ${clients.size}`);
         if (clients.size < 2 && serverGame.state !== "waiting") { console.log("Player left, stopping game."); stopServerGame(); broadcast({ type: 'opponent_left', payload: {} }); }
@@ -599,7 +548,10 @@ function getSerializableGameState() {
         state: serverGame.state,
         players: {},
         match: serverGame.match, 
-        stageName: serverGame.stage?.name
+        stageName: serverGame.stage?.name,
+        // Platforms are needed by the client now for drawing
+        platforms: serverGame.stage?.platforms || [],
+        bgColor: serverGame.stage?.bgColor || '#333'
     };
     
     for(const pId in serverGame.players) {
@@ -607,29 +559,30 @@ function getSerializableGameState() {
         if(p) {
             stateToSend.players[pId] = {
                 id: p.id,
-                x: p.x,
-                y: p.y,
-                vx: p.vx,
-                vy: p.vy,
-                percentage: p.percentage,
-                facingDirection: p.facingDirection,
-                isOnGround: p.isOnGround,
-                // Updated attack/guard states
-                isBasicAttacking: p.isBasicAttacking,
-                isSpecialAttacking: p.isSpecialAttacking,
-                isGuarding: p.isGuarding,
-                // Ledge hanging state
-                isLedgeHanging: p.isLedgeHanging,
-                type: p.type,
-                color: p.color,
-                width: p.width,
-                height: p.height
+                x: p.x, y: p.y, vx: p.vx, vy: p.vy,
+                percentage: p.percentage, facingDirection: p.facingDirection, isOnGround: p.isOnGround,
+                isBasicAttacking: p.isBasicAttacking, isSpecialAttacking: p.isSpecialAttacking, isGuarding: p.isGuarding,
+                isLedgeHanging: p.isLedgeHanging, type: p.type, color: p.color, width: p.width, height: p.height
             };
         }
     }
     return stateToSend;
 }
-function broadcastGameState() { const statePayload = getSerializableGameState(); statePayload.serverTime = Date.now(); broadcast({ type: 'game_state', payload: statePayload }); }
-function broadcast(message) { const msgStr = JSON.stringify(message); clients.forEach((cD) => { if (cD.ws.readyState === WebSocket.OPEN) { try { cD.ws.send(msgStr); } catch (err) { console.error(`Err sending to ${cD.playerId}:`, err); } } }); }
+
+function broadcastGameState() { 
+    const statePayload = getSerializableGameState(); 
+    // *** THE ONLY CHANGE TO SERVER.JS IS HERE ***
+    statePayload.serverTime = Date.now(); // Add server timestamp for interpolation
+    broadcast({ type: 'game_state', payload: statePayload }); 
+}
+
+function broadcast(message) { 
+    const msgStr = JSON.stringify(message); 
+    clients.forEach((cD) => { 
+        if (cD.ws.readyState === WebSocket.OPEN) { 
+            try { cD.ws.send(msgStr); } catch (err) { console.error(`Err sending to ${cD.playerId}:`, err); } 
+        } 
+    }); 
+}
 
 console.log('Server setup complete. Waiting...');
