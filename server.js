@@ -1,4 +1,4 @@
-// server.js - Phase 2: Definitive Physics and State Model
+// server.js - Phase 2: Definitive Physics with Enhanced Logging
 
 const WebSocket = require('ws');
 const Matter = require('matter-js');
@@ -6,7 +6,7 @@ const Matter = require('matter-js');
 // --- Game Constants ---
 const GAME_WIDTH = 800; const GAME_HEIGHT = 600;
 const PLAYER_JUMP_VELOCITY = 16;
-const AIR_CONTROL_FORCE = 0.002; // A small force for influencing movement mid-air
+const AIR_CONTROL_FORCE = 0.002; 
 const BASE_KNOCKBACK = 0.06;
 const KNOCKBACK_SCALING = 0.0006;
 
@@ -42,7 +42,6 @@ const PORT = process.env.PORT || 8080;
 let engine = Matter.Engine.create();
 engine.world.gravity.y = 1.2;
 const physicsBodies = {};
-// --- FIX: Reliable ground detection using a Set ---
 const groundedPlayers = new Set();
 
 // --- Authoritative Game State ---
@@ -158,7 +157,6 @@ function processPlayerInputs() {
         const body = physicsBodies[playerId];
         if (!player || !body) continue;
 
-        // Update ground state from our reliable Set
         player.isOnGround = groundedPlayers.has(playerId);
 
         if (!player.isLedgeHanging && body.isStatic) {
@@ -189,9 +187,7 @@ function processPlayerInputs() {
 
         const moveMultiplier = player.isGuarding ? 0.3 : 1.0;
         
-        // --- FIX: Hybrid Movement Model ---
         if (player.isOnGround) {
-            // On ground: Use setVelocity for snappy control
             let targetVelocityX = 0;
             if (input.left) {
                 targetVelocityX = -player.moveSpeed * moveMultiplier;
@@ -202,7 +198,6 @@ function processPlayerInputs() {
             }
             Matter.Body.setVelocity(body, { x: targetVelocityX, y: body.velocity.y });
         } else {
-            // In air: Use applyForce for nuanced air control (DI)
             if (input.left) {
                 Matter.Body.applyForce(body, body.position, { x: -AIR_CONTROL_FORCE * moveMultiplier, y: 0 });
                 player.facingDirection = -1;
@@ -214,8 +209,7 @@ function processPlayerInputs() {
 
         if (input.jump && player.isOnGround && !player.isGuarding) {
             Matter.Body.setVelocity(body, { x: body.velocity.x, y: -PLAYER_JUMP_VELOCITY });
-            player.isOnGround = false;
-            groundedPlayers.delete(playerId); // Immediately update our ground state
+            groundedPlayers.delete(playerId);
         }
 
         const opp = serverGame.players[playerId === "player1" ? "player2" : "player1"];
@@ -293,7 +287,6 @@ function updateStateFromPhysics() {
     }
 }
 
-// --- FIX: Event-driven ground detection ---
 Matter.Events.on(engine, 'collisionStart', (event) => {
     const pairs = event.pairs;
     for (const pair of pairs) {
@@ -312,7 +305,6 @@ Matter.Events.on(engine, 'collisionEnd', (event) => {
         if (sensorLabel) groundedPlayers.delete(sensorLabel.replace('_sensor', ''));
     }
 });
-
 
 function checkServerWinConditions() {
     if (serverGame.state !== "playing") return;
@@ -355,15 +347,16 @@ function resetServerPlayerState(player) {
 }
 
 function resetServerRoundState() {
-    console.log("[Server] Resetting Round State.");
+    // --- LOGGING: Announce the start of the reset ---
+    console.log("--- [SVR] Starting Round Reset ---");
     
     Matter.World.clear(engine.world, false);
-    groundedPlayers.clear(); // Clear the ground state
+    groundedPlayers.clear();
     engine.world.gravity.y = 1.2;
 
     const randomStageKey = stageKeys[Math.floor(Math.random() * stageKeys.length)];
     serverGame.stage = stages[randomStageKey];
-    console.log(`[Server] New Round Stage: ${serverGame.stage.name}`);
+    console.log(`[SVR LOG] New Stage: ${serverGame.stage.name}`);
 
     const platformBodies = serverGame.stage.platforms.map((p, i) =>
         Matter.Bodies.rectangle(p.x + p.width / 2, p.y + p.height / 2, p.width, p.height, {
@@ -372,21 +365,37 @@ function resetServerRoundState() {
     );
     Matter.World.add(engine.world, platformBodies);
     
-    for (const pId in serverGame.players) { 
-        const player = serverGame.players[pId];
-        const body = physicsBodies[pId];
-        if (player && body) {
-            Matter.World.add(engine.world, body);
-            resetServerPlayerState(player); 
-        }
+    // --- FIX: Recreate players for a clean slate ---
+    const oldPlayerTypes = {
+        player1: serverGame.players.player1?.type || "RED_KNIGHT",
+        player2: serverGame.players.player2?.type || "BLUE_NINJA"
+    };
+
+    // Clean up old bodies from our map
+    for (const pId in physicsBodies) {
+        delete physicsBodies[pId];
     }
+    serverGame.players = {};
+    
+    console.log("[SVR LOG] Creating new player objects for the round...");
+    serverGame.players.player1 = createPlayer("player1", oldPlayerTypes.player1);
+    serverGame.players.player2 = createPlayer("player2", oldPlayerTypes.player2);
+    
+    if (serverGame.players.player1 && serverGame.players.player2) {
+        console.log("[SVR LOG] Players recreated successfully.");
+    } else {
+        console.error("[SVR LOG] FAILED to recreate players.");
+    }
+
     serverGame.match.roundWinnerId = null; 
     serverGame.pendingRoundReset = false;
+    console.log("--- [SVR] Round Reset Finished ---");
 }
 
 function handleServerRoundEnd(winner, loser) {
     if (serverGame.state !== "playing") return;
-    console.log(`[Svr Rnd End] Win:${winner.id}`);
+    // --- LOGGING: Announce winner/loser ---
+    console.log(`[SVR LOG] Round End. Winner: ${winner.id}, Loser: ${loser.id}`);
     serverGame.state="roundOver";
     serverGame.match.roundWinnerId=winner.id;
     const wI=winner.id==="player1"?0:1;
@@ -413,9 +422,8 @@ function resetServerMatchAndStartNew() {
     serverGame.match.matchWinnerId = null;
 
     if (clients.size === 2) {
+        // This function now handles everything needed for the first round
         resetServerRoundState();
-        serverGame.players.player1 = createPlayer("player1", "RED_KNIGHT");
-        serverGame.players.player2 = createPlayer("player2", "BLUE_NINJA");
 
         serverGame.state = "playing";
         serverGame.pendingMatchReset = false;
