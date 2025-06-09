@@ -1,13 +1,14 @@
-// server.js - Phase 2: Integrated Matter.js for Physics (FIXED)
+// server.js - Phase 2: Physics and State Management Fixes
 
 const WebSocket = require('ws');
 const Matter = require('matter-js');
 
 // --- Game Constants ---
 const GAME_WIDTH = 800; const GAME_HEIGHT = 600;
-const PLAYER_MOVE_FORCE = 0.003; 
-const PLAYER_JUMP_VELOCITY = 14; 
-const KNOCKBACK_SCALING = 0.04; 
+// --- FIX: Increased forces for better game feel ---
+const PLAYER_MOVE_FORCE = 0.025; 
+const PLAYER_JUMP_VELOCITY = 15; 
+const KNOCKBACK_SCALING = 0.04;
 
 // Attack system constants
 const BASIC_ATTACK_DAMAGE = 5; const BASE_KNOCKBACK = 3; 
@@ -18,11 +19,10 @@ const GUARD_DURATION = 200; const GUARD_COOLDOWN = 400;
 // Ledge grabbing constants
 const LEDGE_GRAB_RANGE = 25;
 const LEDGE_GRAB_DURATION = 3000;
-const LEDGE_RELEASE_VELOCITY = 8;
 
 const ROUNDS_TO_WIN_MATCH = 2; const OFF_SCREEN_THRESHOLD = 150; const SERVER_TICK_RATE = 1000 / 60;
 
-// --- Data Definitions ---
+// --- Data Definitions (no change) ---
 const characterTypes = { "RED_KNIGHT": { color: 'red', moveSpeed: 5, jumpStrength: 12, gravityMultiplier: 1.0 }, "BLUE_NINJA": { color: 'blue', moveSpeed: 6.5, jumpStrength: 14, gravityMultiplier: 0.95 } };
 const stageKeys = ["stage1", "stage2", "stage3", "stage4"];
 const stages = {
@@ -105,6 +105,7 @@ function releaseLedgeGrab(player, direction) {
     serverGame.ledgeHangTimers[player.id] = 0;
     
     const body = physicsBodies[player.id];
+    if (!body) return;
     Matter.Body.setStatic(body, false);
 
     let releaseVel = { x: 0, y: 0 };
@@ -138,10 +139,20 @@ function gameTick() {
 }
 
 function processPlayerInputs() {
+    // --- FIX: Set all players to not be on ground by default each frame ---
+    for (const pId in serverGame.players) {
+        if (serverGame.players[pId]) serverGame.players[pId].isOnGround = false;
+    }
+
     for (const playerId in serverGame.players) {
         const player = serverGame.players[playerId];
         const body = physicsBodies[playerId];
         if (!player || !body) continue;
+
+        // --- FIX: Defensive state check to prevent frozen players ---
+        if (!player.isLedgeHanging && body.isStatic) {
+            Matter.Body.setStatic(body, false);
+        }
 
         const client = Array.from(clients.values()).find(c => c.playerId === playerId);
         const input = client ? client.lastInput : {};
@@ -176,7 +187,6 @@ function processPlayerInputs() {
 
         if (input.jump && player.isOnGround && !player.isGuarding) {
             Matter.Body.setVelocity(body, { x: body.velocity.x, y: -PLAYER_JUMP_VELOCITY });
-            player.isOnGround = false;
         }
 
         const opp = serverGame.players[playerId === "player1" ? "player2" : "player1"];
@@ -186,20 +196,51 @@ function processPlayerInputs() {
             serverGame.guardCooldowns[playerId] = GUARD_COOLDOWN; serverGame.guardActiveTimers[playerId] = GUARD_DURATION; player.isGuarding = true;
         }
 
+        const charStats = characterAttacks[player.type];
         if (input.basicAttack && serverGame.basicAttackActiveTimers[playerId] <= 0 && serverGame.basicAttackCooldowns[playerId] <= 0 && !player.isGuarding) { 
             serverGame.basicAttackCooldowns[playerId] = BASIC_ATTACK_COOLDOWN; serverGame.basicAttackActiveTimers[playerId] = BASIC_ATTACK_DURATION; player.isBasicAttacking = true; 
-            const charStats = characterAttacks[player.type];
             const attackBox = { x: player.facingDirection === 1 ? player.x + player.width : player.x - charStats.basicRange, y: player.y, width: charStats.basicRange, height: player.height };
             if (opp && oppBody && checkCollision(attackBox, opp)) {
-                if (opp.isGuarding) {
-                    Matter.Body.applyForce(oppBody, oppBody.position, { x: player.facingDirection * 0.01, y: -0.01 });
-                } else {
+                if (opp.isGuarding) { Matter.Body.applyForce(oppBody, oppBody.position, { x: player.facingDirection * 0.01, y: -0.01 }); } 
+                else {
                     opp.percentage += charStats.basicDamage;
                     const kbForce = (BASE_KNOCKBACK + (opp.percentage * KNOCKBACK_SCALING)) * charStats.basicKnockback;
                     const angle = -Math.PI / 4;
                     const force = { x: player.facingDirection * kbForce * Math.cos(angle), y: kbForce * Math.sin(angle) };
                     Matter.Body.applyForce(oppBody, oppBody.position, force);
-                    opp.isOnGround = false;
+                }
+            }
+        }
+        
+        // --- FIX: Re-implement special attacks ---
+        if (input.specialAttack && serverGame.specialAttackActiveTimers[playerId] <= 0 && serverGame.specialAttackCooldowns[playerId] <= 0 && !player.isGuarding) {
+            serverGame.specialAttackCooldowns[playerId] = SPECIAL_ATTACK_COOLDOWN;
+            serverGame.specialAttackActiveTimers[playerId] = SPECIAL_ATTACK_DURATION;
+            player.isSpecialAttacking = true;
+
+            if (player.type === "RED_KNIGHT") {
+                const groundPoundArea = { x: player.x - 40, y: player.y + player.height, width: player.width + 80, height: 60 };
+                if (opp && oppBody && checkCollision(groundPoundArea, opp)) {
+                    if (opp.isGuarding) { Matter.Body.applyForce(oppBody, oppBody.position, { x: player.facingDirection * 0.015, y: -0.015 }); }
+                    else {
+                        opp.percentage += charStats.specialDamage;
+                        const kbForce = (BASE_KNOCKBACK + (opp.percentage * KNOCKBACK_SCALING)) * charStats.specialKnockback;
+                        const force = { x: player.facingDirection * kbForce * 0.5, y: kbForce * 1.2 }; // Strong downward spike
+                        Matter.Body.applyForce(oppBody, oppBody.position, force);
+                    }
+                }
+            } else if (player.type === "BLUE_NINJA") {
+                const dashAttackArea = { x: player.facingDirection === 1 ? player.x : player.x - charStats.specialRange, y: player.y, width: charStats.specialRange, height: player.height };
+                Matter.Body.setVelocity(body, { x: player.facingDirection * 15, y: -2 }); // Dash movement
+                if (opp && oppBody && checkCollision(dashAttackArea, opp)) {
+                    if (opp.isGuarding) { Matter.Body.applyForce(oppBody, oppBody.position, { x: player.facingDirection * 0.02, y: -0.01 }); }
+                    else {
+                        opp.percentage += charStats.specialDamage;
+                        const kbForce = (BASE_KNOCKBACK + (opp.percentage * KNOCKBACK_SCALING)) * charStats.specialKnockback;
+                        const angle = -Math.PI / 6; // Flatter angle
+                        const force = { x: player.facingDirection * kbForce * Math.cos(angle), y: kbForce * Math.sin(angle) };
+                        Matter.Body.applyForce(oppBody, oppBody.position, force);
+                    }
                 }
             }
         }
@@ -224,30 +265,21 @@ function updateStateFromPhysics() {
     }
 }
 
-Matter.Events.on(engine, 'collisionStart', (event) => {
+// --- FIX: Use more reliable 'collisionActive' for ground check ---
+Matter.Events.on(engine, 'collisionActive', (event) => {
     const pairs = event.pairs;
     for (let i = 0; i < pairs.length; i++) {
         const pair = pairs[i];
         let playerBody;
+
         if (pair.bodyA.label.startsWith('player') && pair.bodyB.label.startsWith('platform')) { playerBody = pair.bodyA; } 
         else if (pair.bodyB.label.startsWith('player') && pair.bodyA.label.startsWith('platform')) { playerBody = pair.bodyB; }
+
         if (playerBody) {
             const player = serverGame.players[playerBody.label];
-            if (player && pair.collision.normal.y < -0.5) player.isOnGround = true;
-        }
-    }
-});
-Matter.Events.on(engine, 'collisionEnd', (event) => {
-    const pairs = event.pairs;
-    for (let i = 0; i < pairs.length; i++) {
-        const pair = pairs[i];
-         if (pair.bodyA.label.startsWith('player')) {
-            const player = serverGame.players[pair.bodyA.label];
-            if(player) player.isOnGround = false;
-        }
-         if (pair.bodyB.label.startsWith('player')) {
-            const player = serverGame.players[pair.bodyB.label];
-            if(player) player.isOnGround = false;
+            if (player && pair.collision.normal.y < -0.5) { // Check if collision is from the top
+                player.isOnGround = true;
+            }
         }
     }
 });
@@ -347,14 +379,9 @@ function resetServerMatchAndStartNew() {
     serverGame.match.matchWinnerId = null;
 
     if (clients.size === 2) {
-        // --- THE FIX: Reorder the logic ---
-        // 1. Set up the round first (which selects the stage)
         resetServerRoundState();
-
-        // 2. NOW create the players, which can safely use the stage's spawn points
         serverGame.players.player1 = createPlayer("player1", "RED_KNIGHT");
         serverGame.players.player2 = createPlayer("player2", "BLUE_NINJA");
-        // --- END FIX ---
 
         serverGame.state = "playing";
         serverGame.pendingMatchReset = false;
@@ -371,7 +398,7 @@ function resetServerMatchAndStartNew() {
     }
 }
 
-// --- WebSocket Server Setup ---
+// --- WebSocket Server Setup (no changes from here) ---
 const wss = new WebSocket.Server({ port: PORT });
 console.log(`WebSocket server started on port ${PORT}...`);
 
