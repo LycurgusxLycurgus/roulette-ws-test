@@ -12,6 +12,7 @@
   "description": "",
   "dependencies": {
     "dotenv": "^X.X.X",
+    "matter-js": "^0.19.0",
     "pixi.js": "^8.2.5",
     "ws": "^8.18.2"
   }
